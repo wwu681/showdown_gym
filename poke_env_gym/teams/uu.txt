@@ -1,0 +1,62 @@
+Tornadus-Therian @ Heavy-Duty Boots  
+Ability: Regenerator  
+Tera Type: Steel  
+EVs: 124 HP / 8 Def / 92 SpA / 76 SpD / 208 Spe  
+Timid Nature  
+- Nasty Plot  
+- Hurricane  
+- U-turn  
+- Focus Blast  
+
+Clodsire @ Heavy-Duty Boots  
+Ability: Water Absorb  
+Tera Type: Fairy  
+EVs: 248 HP / 84 Def / 176 SpD  
+Careful Nature  
+- Earthquake  
+- Poison Jab  
+- Spikes  
+- Recover  
+
+Metagross @ Choice Band  
+Ability: Clear Body  
+Tera Type: Steel  
+EVs: 20 HP / 252 Atk / 236 Spe  
+Adamant Nature  
+- Bullet Punch  
+- Heavy Slam  
+- Knock Off  
+- Psychic Fangs  
+
+Rotom-Wash @ Leftovers  
+Ability: Levitate  
+Tera Type: Steel  
+EVs: 248 HP / 44 Def / 120 SpD / 96 Spe  
+Calm Nature  
+IVs: 0 Atk  
+- Hydro Pump  
+- Volt Switch  
+- Thunder Wave  
+- Pain Split  
+
+Cobalion @ Rocky Helmet  
+Ability: Justified  
+Tera Type: Water  
+EVs: 120 HP / 136 Def / 252 Spe  
+Timid Nature  
+IVs: 0 Atk  
+- Stealth Rock  
+- Body Press  
+- Volt Switch  
+- Thunder Wave  
+
+Zarude-Dada @ Heavy-Duty Boots  
+Ability: Leaf Guard  
+Tera Type: Fairy  
+EVs: 252 Atk / 4 SpD / 252 Spe  
+Jolly Nature  
+- Swords Dance  
+- Knock Off  
+- Power Whip  
+- Jungle Healing  
+

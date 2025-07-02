@@ -1,0 +1,62 @@
+
+
+Ogerpon-Wellspring (F) @ Wellspring Mask  
+Ability: Water Absorb  
+Tera Type: Water  
+EVs: 252 Atk / 4 SpD / 252 Spe  
+Jolly Nature  
+- Ivy Cudgel  
+- Knock Off  
+- U-turn  
+- Spikes  
+
+Garganacl @ Leftovers  
+Ability: Purifying Salt  
+Tera Type: Fairy  
+EVs: 252 HP / 52 Def / 204 SpD  
+Careful Nature  
+- Salt Cure  
+- Stealth Rock  
+- Protect  
+- Recover  
+
+Great Tusk @ Heavy-Duty Boots  
+Ability: Protosynthesis  
+Tera Type: Ice  
+EVs: 252 Atk / 4 SpD / 252 Spe  
+Jolly Nature  
+- Headlong Rush  
+- Ice Spinner  
+- Knock Off  
+- Rapid Spin  
+
+Dragonite @ Heavy-Duty Boots  
+Ability: Multiscale  
+Tera Type: Normal  
+EVs: 252 Atk / 4 SpD / 252 Spe  
+Adamant Nature  
+- Extreme Speed  
+- Earthquake  
+- Ice Spinner  
+- Dragon Dance  
+
+Moltres @ Heavy-Duty Boots  
+Ability: Flame Body  
+Tera Type: Fairy  
+EVs: 248 HP / 16 Atk / 232 Def / 12 Spe  
+Adamant Nature  
+- Flamethrower  
+- Brave Bird  
+- Roost  
+- Will-O-Wisp  
+
+Darkrai @ Choice Scarf  
+Ability: Bad Dreams  
+Tera Type: Poison  
+EVs: 252 SpA / 4 SpD / 252 Spe  
+Timid Nature  
+IVs: 0 Atk  
+- Dark Pulse  
+- Ice Beam  
+- Sludge Bomb  
+- Trick  

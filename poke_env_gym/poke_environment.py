@@ -1,141 +1,203 @@
-import copy
-import logging
-from typing import Any
-
+import os
 import numpy as np
-from gymnasium.spaces import Box
-from poke_env import AccountConfiguration
-from poke_env.data import GenData
+from poke_env import (
+    MaxBasePowerPlayer,
+    RandomPlayer,
+    SimpleHeuristicsPlayer,
+)
 from poke_env.environment import AbstractBattle
-from poke_env.player.singles_env import ObsType, SinglesEnv
+from poke_env.player.player import Player
+from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 
-TEAM = """
-Pikachu @ Focus Sash  
-Ability: Static  
-Tera Type: Electric  
-EVs: 8 HP / 248 SpA / 252 Spe  
-Timid Nature  
-IVs: 0 Atk  
-- Thunder Wave  
-- Thunder  
-- Reflect
-- Thunderbolt  
-"""
+from poke_env_gym.base_environment import BasePokeEnv
 
 
-class PokeEnvironment(SinglesEnv):
+class PokeEnvironment(BasePokeEnv):
 
     def __init__(
-        self, account_name_one: str = "train_one", account_name_two: str = "train_two"
+        self,
+        battle_format: str = "gen9randombattle",
+        account_name_one: str = "train_one",
+        account_name_two: str = "train_two",
+        team: str | None = None,
     ):
         super().__init__(
-            account_configuration1=AccountConfiguration(account_name_one, None),
-            account_configuration2=AccountConfiguration(account_name_two, None),
-            start_challenging=True,
-            strict=False,
-            log_level=logging.ERROR,
-            # team=TEAM,
-            # battle_format="gen9anythinggoes",
+            battle_format=battle_format,
+            account_name_one=account_name_one,
+            account_name_two=account_name_two,
+            team=team,
         )
 
-        low = [-1, -1, -1, -1, 0, 0, 0, 0]
-        high = [3, 3, 3, 3, 4, 4, 4, 4]
-        self.observation_spaces = {
-            agent: Box(
-                np.array(low, dtype=np.float32),
-                np.array(high, dtype=np.float32),
-                dtype=np.float32,
-            )
-            for agent in self.possible_agents
-        }
-
-        self.n = 1
-
-        self._prior_battle_one: AbstractBattle  # type: ignore
-        self._prior_battle_two: AbstractBattle  # type: ignore
-
-    def render(self, mode="human"):
-        return np.zeros((100, 100, 3), dtype=np.uint8)
-
-    def reset(self, seed=None, options=None):
-        self.n = 1
-
-        response = super().reset(seed, options)
-
-        self._prior_battle_one = copy.deepcopy(self.battle1)
-        self._prior_battle_two = copy.deepcopy(self.battle2)
-
-        return response
-
-    def step(self, actions: dict[str, np.int64]) -> tuple[
-        dict[str, ObsType],
-        dict[str, float],
-        dict[str, bool],
-        dict[str, bool],
-        dict[str, dict[str, Any]],
-    ]:
-        self.n += 1
-        self._prior_battle_one = copy.deepcopy(self.battle1)  # type: ignore
-        self._prior_battle_two = copy.deepcopy(self.battle2)  # type: ignore
-
-        return super().step(actions)
-
-    def _get_prior_battle(self, battle: AbstractBattle) -> AbstractBattle | None:
-        prior_battle: AbstractBattle | None = None
-        if (
-            self.battle1 is not None
-            and self.battle1.player_username == battle.player_username
-        ):
-            prior_battle = self._prior_battle_one
-        elif (
-            self.battle2 is not None
-            and self.battle2.player_username == battle.player_username
-        ):
-            prior_battle = self._prior_battle_two
-        return prior_battle
-
     def calc_reward(self, battle: AbstractBattle) -> float:
+        """
+        Calculates the reward based on the changes in state of the battle.
+
+        You need to implement this method to define how the reward is calculated
+
+        Args:
+            battle (AbstractBattle): The current battle instance containing information
+                about the player's team and the opponent's team.
+            prior_battle (AbstractBattle): The prior battle instance to compare against.
+        Returns:
+            float: The calculated reward based on the change in state of the battle.
+        """
+
         prior_battle = self._get_prior_battle(battle)
 
-        reward = self.reward_computing_helper(battle)
+        reward = 0.0
+
+        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
+        health_opponent = [
+            mon.current_hp_fraction for mon in battle.opponent_team.values()
+        ]
+
+        # If the opponent has less than 6 Pokémon, fill the missing values with 1.0 (fraction of health)
+        if len(health_opponent) < len(health_team):
+            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
+
+        prior_health_opponent = []
+        if prior_battle is not None:
+            prior_health_opponent = [
+                mon.current_hp_fraction for mon in prior_battle.opponent_team.values()
+            ]
+
+        # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
+        if len(prior_health_opponent) < len(health_team):
+            prior_health_opponent.extend(
+                [1.0] * (len(health_team) - len(prior_health_opponent))
+            )
+
+        diff_health_opponent = np.array(prior_health_opponent) - np.array(
+            health_opponent
+        )
+
+        # Reward for reducing the opponent's health
+        reward += np.sum(diff_health_opponent)
 
         return reward
 
+    def _observation_size(self) -> int:
+        """
+        Returns the size of the observation size to create the observation space for all possible agents in the environment.
+
+        You need to set obvervation size to the number of features you want to include in the observation.
+        Annoyingly, you need to set this manually based on the features you want to include in the observation from emded_battle.
+
+        Returns:
+            int: The size of the observation space.
+        """
+
+        # Simply change this number to the number of features you want to include in the observation from embed_battle.
+        # If you find a way to automate this, please let me know!
+        return 12
+
     def embed_battle(self, battle: AbstractBattle):
-        # -1 indicates that the move does not have a base power
-        # or is not available
+        """
+        Embeds the current state of a Pokémon battle into a numerical vector representation.
+        This method generates a feature vector that represents the current state of the battle,
+        this is used by the agent to make decisions.
 
-        moves_base_power = -np.ones(4)
-        moves_dmg_multiplier = np.ones(4)
-        for i, move in enumerate(battle.available_moves):
-            moves_base_power[i] = (
-                move.base_power / 100
-            )  # Simple rescaling to facilitate learning
+        You need to implement this method to define how the battle state is represented.
 
-            if move.type:
-                type_chart = GenData.from_gen(8).type_chart
-                if battle.opponent_active_pokemon is not None:
-                    moves_dmg_multiplier[i] = move.type.damage_multiplier(
-                        battle.opponent_active_pokemon.type_1,
-                        battle.opponent_active_pokemon.type_2,
-                        type_chart=type_chart,
-                    )
+        Args:
+            battle (AbstractBattle): The current battle instance containing information about
+                the player's team and the opponent's team.
+        Returns:
+            np.float32: A 1D numpy array containing the state you want the agent to observe.
+        """
 
-        # We count how many pokemons have fainted in each team
-        fainted_mon_team = len([mon for mon in battle.team.values() if mon.fainted]) / 6
-        fainted_mon_opponent = (
-            len([mon for mon in battle.opponent_team.values() if mon.fainted]) / 6
-        )
+        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
+        health_opponent = [
+            mon.current_hp_fraction for mon in battle.opponent_team.values()
+        ]
 
-        health_team = [mon.current_hp for mon in battle.team.values()]
+        # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
+        if len(health_opponent) < len(health_team):
+            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
 
-        # Final vector with 10 components
+        # Final vector - single array with health of both teams
         final_vector = np.concatenate(
             [
-                health_team,  # 6 components for the health of each pokemon
-                # moves_base_power,
-                # moves_dmg_multiplier,
-                [fainted_mon_team, fainted_mon_opponent],
+                health_team,  # N components for the health of each pokemon
+                health_opponent,  # N components for the health of opponent pokemon
             ]
         )
+
         return np.float32(final_vector)
+
+
+########################################
+# DO NOT EDIT THE CODE BELOW THIS LINE #
+########################################
+
+
+class PokeEnvWrapper(SingleAgentWrapper):
+    """
+    A wrapper class for the PokeEnvironment that simplifies the setup of single-agent
+    reinforcement learning tasks in a Pokémon battle environment.
+
+    This class initializes the environment with a specified battle format, opponent type,
+    and evaluation mode. It also handles the creation of opponent players and account names
+    for the environment.
+
+    Do NOT edit this class!
+
+    Attributes:
+        battle_format (str): The format of the Pokémon battle (e.g., "gen9randombattle").
+        opponent_type (str): The type of opponent player to use ("simple", "max", "random").
+        evaluation (bool): Whether the environment is in evaluation mode.
+    Raises:
+        ValueError: If an unknown opponent type is provided.
+    """
+
+    def __init__(
+        self,
+        team_type: str = "random",
+        opponent_type: str = "random",
+        evaluation: bool = False,
+    ):
+        opponent: Player
+        if opponent_type == "simple":
+            opponent = SimpleHeuristicsPlayer()
+        elif opponent_type == "max":
+            opponent = MaxBasePowerPlayer()
+        elif opponent_type == "random":
+            opponent = RandomPlayer()
+        else:
+            raise ValueError(f"Unknown opponent type: {opponent_type}")
+
+        account_name_one: str = "train_one" if not evaluation else "eval_one"
+        account_name_two: str = "train_two" if not evaluation else "eval_two"
+
+        account_name_one = f"{account_name_one}_{opponent_type}"
+        account_name_two = f"{account_name_two}_{opponent_type}"
+
+        team = self._load_team(team_type)
+
+        battle_fomat = "gen9randombattle" if team is None else "gen9ubers"
+
+        primary_env = PokeEnvironment(
+            battle_format=battle_fomat,
+            account_name_one=account_name_one,
+            account_name_two=account_name_two,
+            team=team,
+        )
+
+        super().__init__(env=primary_env, opponent=opponent)
+
+    def _load_team(self, team_type: str) -> str | None:
+        bot_teams_folders = os.path.join(os.path.dirname(__file__), "teams")
+
+        bot_teams = {}
+
+        for team_file in os.listdir(bot_teams_folders):
+            if team_file.endswith(".txt"):
+                with open(
+                    os.path.join(bot_teams_folders, team_file), "r", encoding="utf-8"
+                ) as file:
+                    bot_teams[team_file[:-4]] = file.read()
+
+        if team_type in bot_teams:
+            return bot_teams[team_type]
+
+        return None

@@ -1,0 +1,65 @@
+
+
+Rotom-Heat @ Heavy-Duty Boots  
+Ability: Levitate  
+Tera Type: Steel  
+EVs: 248 HP / 8 SpD / 252 Spe  
+Timid Nature  
+IVs: 0 Atk  
+- Volt Switch  
+- Overheat  
+- Will-O-Wisp  
+- Pain Split  
+
+Krookodile @ Leftovers  
+Ability: Intimidate  
+Tera Type: Ghost  
+EVs: 96 HP / 252 SpD / 160 Spe  
+Jolly Nature  
+- Stealth Rock  
+- Earthquake  
+- Knock Off  
+- Taunt  
+
+Slowbro @ Rocky Helmet  
+Ability: Regenerator  
+Tera Type: Fairy  
+EVs: 252 HP / 244 Def / 12 Spe  
+Bold Nature  
+IVs: 0 Atk  
+- Scald  
+- Future Sight  
+- Thunder Wave  
+- Slack Off  
+
+Cyclizar @ Assault Vest  
+Ability: Regenerator  
+Tera Type: Poison  
+EVs: 232 HP / 24 SpD / 252 Spe  
+Jolly Nature  
+- Double-Edge  
+- Rapid Spin  
+- Knock Off  
+- U-turn  
+
+Jirachi @ Leftovers  
+Ability: Serene Grace  
+Tera Type: Fighting  
+EVs: 44 HP / 212 SpA / 252 Spe  
+Timid Nature  
+IVs: 0 Atk  
+- Psychic Noise  
+- Aura Sphere  
+- Thunderbolt  
+- Calm Mind  
+
+Zapdos-Galar @ Choice Scarf  
+Ability: Defiant  
+Tera Type: Flying  
+EVs: 252 Atk / 4 SpD / 252 Spe  
+Jolly Nature  
+- Close Combat  
+- Brave Bird  
+- Knock Off  
+- U-turn  
+
