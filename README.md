@@ -1,1 +1,261 @@
-# poke_env_gym
+# Pokemon Showdown Reinforcement Learning Environment
+Base code and templates for creating the Pokemon Showdown Reinforcement Learning environment. This document provides all the instructions to setup and create the environment.
+
+## Pokemon Showdown
+This online battle simulator allows users to engage in Pokémon battles, including randomly generated teams or custom teams.
+
+Additional details https://pokemonshowdown.com/
+
+<p align="center">
+    <img src="./media/showdown.jpeg" style="width: 40%;" />
+</p>
+
+## Objective
+The objective of this assignment is to implement your version of the "showdown_environment.py" environment to enable a Reinforcement Learning agent to learn to competitively battle Pokemon in the Pokemon Showdown game. You are free to choose how you implement the environment, using any methodology or resources online that you wish.
+
+The core objective is to consider what information is required from the agent, and to get hands on experience using machine learning to solve a complex task. Your exploraiton into solving this problem will provide key insights into the material - which you will demonstrate in the report by explaining how you approached solving this complex task with reinforcement learning and what you experienced along the way. This is not a trivial task to learn - demonstrating that you can ***connect the dots in the lectures to the challenges you face throughout the assignment*** is what we are looking for.
+
+The full details of the assignment marking and expectations of the report are laid out on Canvas: 
+
+<p align="center">
+    <img src="./media/in-game.png" style="width: 80%;" />
+</p>
+
+# Setup
+Follow these steps carefully to pull the required libraries and packages to do this assignment. These instructions will default to using a folder called "~/compsys726" to manage the required packages but you may pull these packages into any directory you desire.
+
+The assignment has been developed for python3.10 and it is recommended you use a python virtual environment for working on this assignment. I recommend pyenv but you can use whichever you are fimilar with. 
+
+These instructions are written based on using Ubuntu 22.04 but will suffice for Windows/MAC users as well - but may require changes to certain commands. Any specific issues with following these instructions please message the teaching staff on Slack.
+
+![Python](https://img.shields.io/badge/python-3.10-blue.svg)
+
+## Base Folder
+Create the base folder for working with this assignment. If you wish to change which directory you set this assignment up in, please make sure to read the following instructions carefully to avoid putting things in the wrong place. 
+
+```
+mkdir ~/compsys726
+```
+
+## Create Virtual Environment (Optional)
+It is strongly recommended that you use a virtual environment to better control the requirements used in this project.
+The instructions below will show you how to create a pyenv environment - you are free to use your preference of virtual environment though.
+
+```
+python3 -m venv ~/venv/pokemon
+```
+
+Remember to activate the virtual environment every time you open a new tab to load the right environment. 
+
+```
+source ~/venv/pokemon/bin/activate
+```
+
+## Install Pokemon Showdown
+Clone and install the Pokemon Showdown server for running and testing locally. Note if you have done this for the epxert agent assignment, you don't need to replicate this step.
+
+```
+cd ~/compsys726
+git clone https://github.com/smogon/pokemon-showdown.git
+cd pokemon-showdown
+npm install
+cp config/config-example.js config/config.js
+node pokemon-showdown start --no-security
+```
+
+**Pro tip** on Ubuntu you can put this inside of the **~/.bashrc** with an alias command to make this easier. 
+The example below will activate the environment through the **pkm** command. 
+
+```
+echo "alias pkm='source ~/venv/pokemon/bin/activate'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+## Install Required Packages
+This assignment requires three key packages to operate - you'll need to install them in a specific order as laid out below.
+
+### 1: cares_reinforcement_learning
+The cares_reinforcement_learning package provides implementations of modern Reinforcement Learning algorithms and utlities for doing research. This package contains the reinforcement learning algorithms and implementations you can leverage to learn to play Pokemon. Further details can be explored here: https://github.com/UoA-CARES/cares_reinforcement_learning
+
+```
+cd ~/compsys726
+git clone https://github.com/UoA-CARES/cares_reinforcement_learning.git
+cd cares_reinforcement_learning
+pip3 install -r requirements.txt
+pip3 install --editable .
+```
+
+### 2: poke_env_gym (primary package)
+This is the current package - it contains the requirements for implementing the Pokemon Environment for this project. All your work will be done in this specific package. This is explained in further details below. 
+
+```
+cd ~/compsys726
+git clone REPLACE_PATH_GIT
+cd compsys726_pokemon_agent
+pip3 install -r requirements.txt
+pip3 install --editable .
+```
+
+### 3: gymnasium_envrionments
+We have created a standardised general purpose gym that wraps the most common simulated environments used in reinforcement learning into a single easy to use place. This package serves as an example of how to develop and setup new environments - perticularly for the robotic environments. This package utilises the algorithms implemented in the repository https://github.com/UoA-CARES/cares_reinforcement_learning/ and the Pokemon Environment you will implement here in compsys726_pokemon_agent. Additional information can found here: https://github.com/UoA-CARES/gymnasium_envrionments
+
+This package is how you will run the training agent and test your Pokemon Environment. 
+
+```
+cd ~/compsys726
+git clone https://github.com/UoA-CARES/gymnasium_envrionments.git 
+cd gymnasium_envrionments
+pip3 install -r requirements.txt
+```
+
+## Usage
+This package provides the baseline code for the Showdown environment - you run these envrionments through gymnasium_envrionment.
+
+`run.py` takes in hyperparameters that allow you to customise the training run enviromment – OpenAI or DMCS Environment - or RL algorithm. Use `python3 run.py -h` for help on what parameters are available for customisation.
+
+An example is found below for running on an example of the openai environment with TD3 through console
+
+```
+cd ~/compsys726/gymnasium_envrionments/scripts
+python run.py train cli --gym openai --task HalfCheetah-v5 TD3 --display 1
+```
+
+### Running a Training Session
+To run the Showdown Environment you need to run it through the ***gymnasium_envrionments*** package. The environment is not currently implemented - it is your job to complete the state, action, and reward functions for the agent to learn from. The current implementation shows a basic functional example but this is insufficient to learn from. 
+
+To train an agent on the environment you can use the command below with your choice of ***domain*** and ***task*** for the agent to learn from. The ***domain*** defines the strength the pokemon teams your agent will learn to fight against and with. The ***task*** defines the type of expert agent that the agent will train to beat. The various domains and task are described further below with the marking guides.
+
+```
+cd ~/compsys726/gymnasium_envrionments/scripts
+python run.py train cli --gym pokeenv --domain uber --task simple DQN
+```
+
+### Viewing Training Results
+The results of training the agents is saved into this folder: ***~/cares_rl_logs/*** by default. The structure of the results is saved as below.
+
+```text
+├─ <log_path>
+|  ├─ env_config.json
+|  ├─ alg_config.json
+|  ├─ train_config.json
+|  ├─ *_config.json
+|  ├─ ...
+|  ├─ SEED_N
+|  |  ├─ data
+|  |  |  ├─ train.csv
+|  |  |  ├─ eval.csv
+|  |  ├─ figures
+|  |  |  ├─ eval.png
+|  |  |  ├─ train.png
+|  |  ├─ models
+|  |  |  ├─ model.pht
+|  |  |  ├─ CHECKPOINT_N.pht
+|  |  |  ├─ ...
+|  |  ├─ videos
+|  |  |  ├─ STEP.mp4
+|  |  |  ├─ ...
+|  ├─ SEED_N
+|  |  ├─ ...
+|  ├─ ...
+```
+
+# Implementing your Showdown Environment
+Your Pokemon Environment will be fully implemented in ***showdown_environment.py***. The goal is to determine a suitable state representation, set of actions, and reward function to enable the agent to learn to beat the various types of expert agents. Do not edit any other files and do not create any other files. 
+
+## showdown_environment.py
+The ShowdownEnvironment class represents the Showdown game environment for the agent. You are free to modify and expand the class and add additional features/functions required to implement your environment but only inside that file. This is not best coding practice but it makes the lecturers lives easier.
+
+There are two primary functions in the class that you need to implement in order to provde the agent with useful information to learn from. 
+
+### State - embed_battle
+The ***embed_battle*** function returns to the state information to the agent - the current observation of Showdown. The provided example returns the current helth of the agents pokemon and the opponents pokemon. You will need to expand on this state representation to incorporate what you determine to be the best observation for the agent.
+
+```python
+def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
+    """
+    Embeds the current state of a Pokémon battle into a numerical vector representation.
+    This method generates a feature vector that represents the current state of the battle,
+    this is used by the agent to make decisions.
+
+    You need to implement this method to define how the battle state is represented.
+
+    Args:
+        battle (AbstractBattle): The current battle instance containing information about
+            the player's team and the opponent's team.
+    Returns:
+        np.float32: A 1D numpy array containing the state you want the agent to observe.
+    """
+
+    health_team = [mon.current_hp_fraction for mon in battle.team.values()]
+    health_opponent = [
+        mon.current_hp_fraction for mon in battle.opponent_team.values()
+    ]
+
+    # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
+    if len(health_opponent) < len(health_team):
+        health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
+
+    # Final vector - single array with health of both teams
+    final_vector = np.concatenate(
+        [
+            health_team,  # N components for the health of each pokemon
+            health_opponent,  # N components for the health of opponent pokemon
+        ]
+    )
+
+    return final_vector
+```
+
+### Reward - calc_reward
+The ***calc_reward*** function determines the reward for the current action. The current example returns a reward based on the difference between the oppononets current health and prior health, effectively giving reward for doing damage. You will need to develop your own reward function to guide the agent's learning.
+
+```python
+def calc_reward(self, battle: AbstractBattle) -> float:
+    """
+    Calculates the reward based on the changes in state of the battle.
+
+    You need to implement this method to define how the reward is calculated
+
+    Args:
+        battle (AbstractBattle): The current battle instance containing information
+            about the player's team and the opponent's team.
+        prior_battle (AbstractBattle): The prior battle instance to compare against.
+    Returns:
+        float: The calculated reward based on the change in state of the battle.
+    """
+
+    prior_battle = self._get_prior_battle(battle)
+
+    reward = 0.0
+
+    health_team = [mon.current_hp_fraction for mon in battle.team.values()]
+    health_opponent = [
+        mon.current_hp_fraction for mon in battle.opponent_team.values()
+    ]
+
+    # If the opponent has less than 6 Pokémon, fill the missing values with 1.0 (fraction of health)
+    if len(health_opponent) < len(health_team):
+        health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
+
+    prior_health_opponent = []
+    if prior_battle is not None:
+        prior_health_opponent = [
+            mon.current_hp_fraction for mon in prior_battle.opponent_team.values()
+        ]
+
+    # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
+    if len(prior_health_opponent) < len(health_team):
+        prior_health_opponent.extend(
+            [1.0] * (len(health_team) - len(prior_health_opponent))
+        )
+
+    diff_health_opponent = np.array(prior_health_opponent) - np.array(
+        health_opponent
+    )
+
+    # Reward for reducing the opponent's health
+    reward += np.sum(diff_health_opponent)
+
+    return reward
+```
+

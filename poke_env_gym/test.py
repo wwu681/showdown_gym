@@ -19,7 +19,7 @@ from poke_env.player.player import Player
 from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 from poke_env.player.singles_env import SinglesEnv
 
-from poke_env_gym.poke_environment import PokeEnvironment
+from poke_env_gym.showdown_environment import ShowdownEnvironment
 
 
 # # The action mapping is as follows:
@@ -34,7 +34,7 @@ from poke_env_gym.poke_environment import PokeEnvironment
 
 
 def ma_run():
-    env: SinglesEnv = PokeEnvironment()
+    env: SinglesEnv = ShowdownEnvironment()
 
     print("Observation space:", env.observation_space("battle_one"))
     print("Observation space:", env.observation_space("battle_one").shape)
@@ -96,7 +96,7 @@ def single_run():
 
     print("**" * 20)
 
-    env: SinglesEnv = PokeEnvironment()
+    env: SinglesEnv = ShowdownEnvironment()
 
     single_env = SingleAgentWrapper(env, SimpleHeuristicsPlayer())
 

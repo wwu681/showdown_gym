@@ -16,7 +16,7 @@ from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 from poke_env.player.singles_env import ObsType, SinglesEnv
 
 
-class BasePokeEnv(SinglesEnv):
+class BaseShowdownEnv(SinglesEnv):
     """
     Base class for PokeEnv
     """

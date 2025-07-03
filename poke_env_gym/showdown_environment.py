@@ -9,10 +9,10 @@ from poke_env.environment import AbstractBattle
 from poke_env.player.player import Player
 from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 
-from poke_env_gym.base_environment import BasePokeEnv
+from poke_env_gym.base_environment import BaseShowdownEnv
 
 
-class PokeEnvironment(BasePokeEnv):
+class ShowdownEnvironment(BaseShowdownEnv):
 
     def __init__(
         self,
@@ -91,7 +91,7 @@ class PokeEnvironment(BasePokeEnv):
         # If you find a way to automate this, please let me know!
         return 12
 
-    def embed_battle(self, battle: AbstractBattle):
+    def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
         Embeds the current state of a Pokémon battle into a numerical vector representation.
         This method generates a feature vector that represents the current state of the battle,
@@ -123,7 +123,7 @@ class PokeEnvironment(BasePokeEnv):
             ]
         )
 
-        return np.float32(final_vector)
+        return final_vector
 
 
 ########################################
@@ -131,7 +131,7 @@ class PokeEnvironment(BasePokeEnv):
 ########################################
 
 
-class PokeEnvWrapper(SingleAgentWrapper):
+class SingleShowdownWrapper(SingleAgentWrapper):
     """
     A wrapper class for the PokeEnvironment that simplifies the setup of single-agent
     reinforcement learning tasks in a Pokémon battle environment.
@@ -176,7 +176,7 @@ class PokeEnvWrapper(SingleAgentWrapper):
 
         battle_fomat = "gen9randombattle" if team is None else "gen9ubers"
 
-        primary_env = PokeEnvironment(
+        primary_env = ShowdownEnvironment(
             battle_format=battle_fomat,
             account_name_one=account_name_one,
             account_name_two=account_name_two,
