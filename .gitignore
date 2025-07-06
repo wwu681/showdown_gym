@@ -9,7 +9,7 @@ venv/
 /dataSources/
 /dataSources.local.xml
 build/
-pokeenv_gym.egg-info/
+showdown_gym.egg-info/
 dist/
 .idea/
 .DS_Store
