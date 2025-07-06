@@ -5,9 +5,9 @@ from poke_env import (
     RandomPlayer,
     SimpleHeuristicsPlayer,
 )
-from poke_env.environment import AbstractBattle
+from poke_env.battle import AbstractBattle
 from poke_env.player.player import Player
-from poke_env.player.single_agent_wrapper import SingleAgentWrapper
+from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
 
 from showdown_gym.base_environment import BaseShowdownEnv
 

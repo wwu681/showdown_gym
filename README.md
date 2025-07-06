@@ -84,7 +84,7 @@ pip3 install -r requirements.txt
 pip3 install --editable .
 ```
 
-### 2: poke_env_gym (primary package)
+### 2: showdown_gym (primary package)
 This is the current package - it contains the requirements for implementing the Pokemon Environment for this project. All your work will be done in this specific package. This is explained in further details below. 
 
 ```

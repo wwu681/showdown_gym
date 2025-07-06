@@ -5,8 +5,8 @@ from typing import Any, Dict
 import numpy as np
 from gymnasium.spaces import Box
 from poke_env import AccountConfiguration
-from poke_env.environment import AbstractBattle
-from poke_env.player.singles_env import ObsType, SinglesEnv
+from poke_env.battle import AbstractBattle
+from poke_env.environment.singles_env import ObsType, SinglesEnv
 
 
 class BaseShowdownEnv(SinglesEnv):
@@ -24,7 +24,6 @@ class BaseShowdownEnv(SinglesEnv):
         super().__init__(
             account_configuration1=AccountConfiguration(account_name_one, None),
             account_configuration2=AccountConfiguration(account_name_two, None),
-            start_challenging=True,
             strict=False,
             log_level=logging.ERROR,
             battle_format=battle_format,
