@@ -4,15 +4,8 @@ from typing import Any, Dict
 
 import numpy as np
 from gymnasium.spaces import Box
-from poke_env import (
-    AccountConfiguration,
-    MaxBasePowerPlayer,
-    RandomPlayer,
-    SimpleHeuristicsPlayer,
-)
+from poke_env import AccountConfiguration
 from poke_env.environment import AbstractBattle
-from poke_env.player.player import Player
-from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 from poke_env.player.singles_env import ObsType, SinglesEnv
 
 

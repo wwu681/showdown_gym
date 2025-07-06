@@ -89,8 +89,8 @@ This is the current package - it contains the requirements for implementing the 
 
 ```
 cd ~/compsys726
-git clone REPLACE_PATH_GIT
-cd compsys726_pokemon_agent
+git clone https://github.com/UoA-CARES/showdown_gym.git
+cd showdown_gym
 pip3 install -r requirements.txt
 pip3 install --editable .
 ```
@@ -266,7 +266,7 @@ You need to create a requirements.txt that contains all the python packages you 
 
 ```
 pip3 install pipreqs
-cd ~/compsys726/REPLACE_PATH
+cd ~/compsys726/showdown_gym
 python3 -m pipreqs.pipreqs --force
 ```
 
