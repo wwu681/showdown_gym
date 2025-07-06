@@ -9,7 +9,7 @@ from poke_env.environment import AbstractBattle
 from poke_env.player.player import Player
 from poke_env.player.single_agent_wrapper import SingleAgentWrapper
 
-from poke_env_gym.base_environment import BaseShowdownEnv
+from showdown_gym.base_environment import BaseShowdownEnv
 
 
 class ShowdownEnvironment(BaseShowdownEnv):
