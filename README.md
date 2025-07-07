@@ -291,15 +291,13 @@ rm -r ~/venv/test
 ## Step 3 - Upload Files to Google Drive
 Following this link: https://drive.google.com/drive/folders/1nuXDLVTvc9crlSS7gU0rDGpQSBKTiNo5
 
-Create a folder using your ***upi*** as the name. Copy your **requirements.txt** and 
-
- files into the folder. These files can be updated as many times as you wish until the final deadline. 
+Create a folder using your ***upi*** as the name. Copy your **requirements.txt**, **showdown_environment.py**, and results folder from **~/cares_rl_logs/** into the folder. These files can be updated as many times as you wish until the final deadline. 
 
 # Evaluation
 The assignment will be evaluated based on how effectively your environment enables an agent to learn against the ***max*** expert agent (***task***) in the ***random*** domain. The random domain creates a random team for each player each game, meaning the agent will need to adapt to ***any*** Pokemon team it may use or compete against. There will be bonus points for demonstrating the ***optional*** ability to train an agent to be effective against the challenging ***simple*** expert agent (***task***).
 
 ## Marking Guide
-Your trained agent will be evaluated based on its performance against the ***max expert agent*** over 100 battles through testing comamnds in gym_environment. You can run this locally using the instructions below to get an indication of your mark and metrics for your report. The **final mark** used for your grade will be scored from running the code locally by the teaching staff. 
+Your trained agent will be evaluated based on its win rate performance against the ***max expert agent*** over 100 battles through testing comamnds in gym_environment. You can run this locally using the instructions below to get an indication of your mark and metrics for your report. The **final mark** used for your grade will be scored from running the code locally by the teaching staff. 
 
 ```
 python run.py test --data_path PATH_TO_RL_LOGS --seeds 10 --episodes 100
@@ -312,7 +310,7 @@ python run.py test --data_path ~/cares_rl_logs/DQN/DQN-random-max-25_07_04_09-00
 
 The breakdown of marks is shown below based the performance of your agent.
 
-| Max Damage Expert Agent | **Marks**       |
+| Max Damage Expert Agent (Win Rate) | **Marks**       |
 |-------------------------|-----------------|
 | max (≥ 95%)             | 10.0%           |
 | max (≥ 90%)             | 9.0%            |
@@ -328,7 +326,7 @@ The breakdown of marks is shown below based the performance of your agent.
 
 The primary goal is to train an agent capable of beating the ***max*** expert agent. For those wishing to push themselves there are **bonus marks** for anyone who trains their agent to perform against the ***simple*** expert agent. 
 
-| Simple Expert Agent     | **Bonus Marks** |
+| Simple Expert Agent (Win Rate)    | **Bonus Marks** |
 |-------------------------|-----------------|
 | simple (≥ 90%)          | +5%             |
 | simple (≥ 80%)          | +4%             |
