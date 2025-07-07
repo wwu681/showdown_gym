@@ -1,13 +1,11 @@
 import os
+from typing import Any, Dict
+
 import numpy as np
-from poke_env import (
-    MaxBasePowerPlayer,
-    RandomPlayer,
-    SimpleHeuristicsPlayer,
-)
+from poke_env import MaxBasePowerPlayer, RandomPlayer, SimpleHeuristicsPlayer
 from poke_env.battle import AbstractBattle
-from poke_env.player.player import Player
 from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
+from poke_env.player.player import Player
 
 from showdown_gym.base_environment import BaseShowdownEnv
 
@@ -28,6 +26,18 @@ class ShowdownEnvironment(BaseShowdownEnv):
             team=team,
         )
 
+    def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
+        info = super().get_additional_info()
+
+        # Add any additional information you want to include in the info dictionary that is saved in logs
+        # For example, you can add the win status
+
+        if self.battle1 is not None:
+            agent = self.possible_agents[0]
+            info[agent]["win"] = self.battle1.won
+
+        return info
+
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
         Calculates the reward based on the changes in state of the battle.
@@ -36,7 +46,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         Args:
             battle (AbstractBattle): The current battle instance containing information
-                about the player's team and the opponent's team.
+                about the player's team and the opponent's team from the player's perspective.
             prior_battle (AbstractBattle): The prior battle instance to compare against.
         Returns:
             float: The calculated reward based on the change in state of the battle.

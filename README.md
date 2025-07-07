@@ -158,6 +158,21 @@ The results of training the agents is saved into this folder: ***~/cares_rl_logs
 |  ├─ ...
 ```
 
+The data folder contains all the training/evaluation data from the training process. The figures will default to plotting the reward throughout the training and evaluation phases. If you want to produce plots of other information you can use the plotter with commands similar too below:
+
+```
+cd ~/compsys726/cares_reinforcement_learning/cares_reinforcement_learning/util
+python plotter.py -s ~/cares_rl_logs -d ~/cares_rl_logs/ALGORITHM/ALGORITHM-TASK-YY_MM_DD:HH:MM:SS --y_train win --y_eval win
+```
+
+The command above will plot the average win rate of the agent at each step during training and evaluation. The win rate is what will be used to evaluate your agent. 
+
+For full commands for plotting results data see the help data for plotter.
+
+```
+python plotter.py -h
+```
+
 # Implementing your Showdown Environment
 Your Pokemon Environment will be fully implemented in ***showdown_environment.py***. The goal is to determine a suitable state representation, set of actions, and reward function to enable the agent to learn to beat the various types of expert agents. Do not edit any other files and do not create any other files. 
 
@@ -256,6 +271,23 @@ def calc_reward(self, battle: AbstractBattle) -> float:
     reward += np.sum(diff_health_opponent)
 
     return reward
+```
+
+### Training/Evaluation Info - get_additional_info
+You will want to produce quantified performance metrics for your agent throughout the training beyond just the reward given to the agent. To add additional information to be plotted later you can extend the ***get_additional_info*** function. This will return to the training system additonal information about the progress of the agent in the battle that you can use to evaluate your agent. Note that the info data will only show the information from the last episode. 
+
+```python
+def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
+    info = super().get_additional_info()
+
+    # Add any additional information you want to include in the info dictionary that is saved in logs
+    # For example, you can add the win status
+
+    if self.battle1 is not None:
+        agent = self.possible_agents[0]
+        info[agent]["win"] = self.battle1.won
+
+    return info
 ```
 
 # Submission

@@ -77,12 +77,13 @@ class BaseShowdownEnv(SinglesEnv):
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
 
-        info[self.possible_agents[0]]["win"] = (
-            False if self.battle1 is None else self.battle1.won
-        )
-        info[self.possible_agents[1]]["win"] = (
-            False if self.battle2 is None else self.battle2.won
-        )
+        if self.battle1 is not None:
+            agent_one = self.possible_agents[0]
+            info[agent_one]["win"] = self.battle1.won
+
+        if self.battle2 is not None:
+            agent_two = self.possible_agents[1]
+            info[agent_two]["win"] = self.battle2.won
 
         return info
 
