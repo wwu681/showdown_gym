@@ -274,7 +274,7 @@ def calc_reward(self, battle: AbstractBattle) -> float:
 ```
 
 ### Training/Evaluation Info - get_additional_info
-You will want to produce quantified performance metrics for your agent throughout the training beyond just the reward given to the agent. To add additional information to be plotted later you can extend the ***get_additional_info*** function. This will return to the training system additonal information about the progress of the agent in the battle that you can use to evaluate your agent. Note that the info data will only show the information from the last episode. 
+You will want to produce quantified performance metrics for your agent throughout the training beyond just the reward given to the agent. To add additional information to be plotted later you can extend the ***get_additional_info*** function. This will return to the training system additonal information about the progress of the agent in the battle that you can use to evaluate your agent. Note that the info data will only show the information from the last step of the episode. 
 
 ```python
 def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
