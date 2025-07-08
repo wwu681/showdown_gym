@@ -125,12 +125,14 @@ You should see the environment on screen with the robot in the image below tryin
 # Showdown Training
 To run the Showdown Environment you need to run it through the ***gymnasium_envrionments*** package. The Showdown environment is not currently implemented - it is your job to complete the state, action, and reward functions for the agent to learn from. The current implementation shows a basic functional example but this is insufficient to learn from. 
 
-To train an agent on the environment you can use the command below. The ***domain*** defines the strength the pokemon teams your agent will learn to fight against and with. The ***task*** defines the type of expert agent that the agent will train to beat. In the case of this assignment your goal is to beat the ***max*** agent with bonus points for being able to compete against the ***simple*** agent. 
+To train an agent on the environment you can use the command below. The ***domain*** defines the type of Pokemon team you will be training with and against. The ***task*** defines the type of expert agent that the agent will train to beat. 
 
 ```
 cd ~/compsys726/gymnasium_envrionments/scripts
 python run.py train cli --gym pokeenv --domain random --task max DQN
 ```
+
+In the case of this assignment your goal is to beat the ***max*** agent (task) in the ***random*** domain. The random domain creates a random team for each player each game, meaning the agent will need to adapt to ***any*** Pokemon team it may use or compete against.
 
 ## Viewing Training Results
 The results of training the agents is saved into this folder: ***~/cares_rl_logs/*** by default. The structure of the results is saved as below.
@@ -199,7 +201,7 @@ python run.py train config --data_path PATH_TO_RUN_CONFIGURATIONS_FOLDER
 ```
 
 # Implementing your Showdown Environment
-Your Pokemon Environment will be fully implemented in ***showdown_environment.py***. The goal is to determine a suitable state representation, set of actions, and reward function to enable the agent to learn to beat the various types of expert agents. Do not edit any other files and do not create any other files. 
+Your Pokemon Environment will be fully implemented in ***showdown_environment.py***. The goal is to determine a suitable state representation, set of actions, and reward function to enable the agent to learn to beat the ***max*** expert agentin the **random** domain. Do not edit any other files and do not create any other files. 
 
 ## showdown_environment.py
 The ShowdownEnvironment class represents the Showdown game environment for the agent. You are free to modify and expand the class and add additional features/functions required to implement your environment but only inside that file. This is not best coding practice but it makes the lecturers lives easier.
