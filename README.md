@@ -247,6 +247,25 @@ def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
     return final_vector
 ```
 
+The function below returns the size of the embedding for the environment - this is critical for the correct setup of the network sizes. I couldn't find a way to automate this step as the battle object isn't created until after the setup of the environment. You will need to ***manually*** change this number to align with the size of the encoding vector returned by ***embed_battle***. Yes, I know this is annoying and dumb - but for the life of me I couldn't find a work around that wasn't significantly more jank.
+
+```python
+def _observation_size(self) -> int:
+        """
+        Returns the size of the observation size to create the observation space for all possible agents in the environment.
+
+        You need to set obvervation size to the number of features you want to include in the observation.
+        Annoyingly, you need to set this manually based on the features you want to include in the observation from emded_battle.
+
+        Returns:
+            int: The size of the observation space.
+        """
+
+        # Simply change this number to the number of features you want to include in the observation from embed_battle.
+        # If you find a way to automate this, please let me know!
+        return 12
+```
+
 ### Reward - calc_reward
 The ***calc_reward*** function determines the reward for the current action. The current example returns a reward based on the difference between the oppononets current health and prior health, effectively giving reward for doing damage. You will need to develop your own reward function to guide the agent's learning.
 

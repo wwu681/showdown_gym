@@ -125,6 +125,10 @@ class ShowdownEnvironment(BaseShowdownEnv):
         if len(health_opponent) < len(health_team):
             health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
 
+        #########################################################################################################
+        # Caluclate the length of the final_vector and make sure to update the value in _observation_size above #
+        #########################################################################################################
+
         # Final vector - single array with health of both teams
         final_vector = np.concatenate(
             [
