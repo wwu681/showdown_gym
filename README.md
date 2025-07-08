@@ -11,7 +11,7 @@ Additional details https://pokemonshowdown.com/
 </p>
 
 ## Objective
-The objective of this assignment is to implement your version of the "showdown_environment.py" environment to enable a Reinforcement Learning agent to learn to competitively battle Pokemon in the Pokemon Showdown game. You are free to choose how you implement the environment, using any methodology or resources online that you wish.
+There are two objectives to this assignment. The first is to implement your version of the "showdown_environment.py" environment to enable a Reinforcement Learning agent to learn to competitively battle Pokemon in the Pokemon Showdown game. You are free to choose how you implement the environment, using any methodology or resources online that you wish. The second is to chose which algorithm is appropriate for then learning to complete the task. 
 
 The core objective is to consider what information is required from the agent, and to get hands on experience using machine learning to solve a complex task. Your exploraiton into solving this problem will provide key insights into the material - which you will demonstrate in the report by explaining how you approached solving this complex task with reinforcement learning and what you experienced along the way. This is not a trivial task to learn - demonstrating that you can ***connect the dots in the lectures to the challenges you face throughout the assignment*** is what we are looking for.
 
@@ -96,9 +96,9 @@ pip3 install --editable .
 ```
 
 ### 3: gymnasium_envrionments
-We have created a standardised general purpose gym that wraps the most common simulated environments used in reinforcement learning into a single easy to use place. This package serves as an example of how to develop and setup new environments - perticularly for the robotic environments. This package utilises the algorithms implemented in the repository https://github.com/UoA-CARES/cares_reinforcement_learning/ and the Pokemon Environment you will implement here in compsys726_pokemon_agent. Additional information can found here: https://github.com/UoA-CARES/gymnasium_envrionments
+We have created a standardised general purpose gym that wraps the most common simulated environments used in reinforcement learning into a single easy to use place. This package serves as an example of how to develop and setup new environments - particularly for the robotic environments. This package utilises the algorithms implemented in the repository https://github.com/UoA-CARES/cares_reinforcement_learning/ and the Pokemon Environment you will implement here in showdown_gym. Additional information can found here: https://github.com/UoA-CARES/gymnasium_envrionments
 
-This package is how you will run the training agent and test your Pokemon Environment. 
+This package is how you will run the training agent and test your Showdown Environment. It enables all the standardised logging and configuration handling for your evaluations.
 
 ```
 cd ~/compsys726
@@ -107,20 +107,23 @@ cd gymnasium_envrionments
 pip3 install -r requirements.txt
 ```
 
-## Usage
-This package provides the baseline code for the Showdown environment - you run these envrionments through gymnasium_envrionment.
+To test that everything has installed correctly you can test training an RL agent for the OpenAI **HalfCheetah** task. The `run.py` takes in hyperparameters that allow you to customise the training enviromment – OpenAI, DMCS Environment, Showdown - or RL algorithm. Use `python3 run.py -h` for help on what parameters are available for customisation.
 
-`run.py` takes in hyperparameters that allow you to customise the training run enviromment – OpenAI or DMCS Environment - or RL algorithm. Use `python3 run.py -h` for help on what parameters are available for customisation.
-
-An example is found below for running on an example of the openai environment with TD3 through console
+To test that everything has installed correctly you can run an example of the openai environment with TD3 through the console command below.
 
 ```
 cd ~/compsys726/gymnasium_envrionments/scripts
 python run.py train cli --gym openai --task HalfCheetah-v5 TD3 --display 1
 ```
 
-### Running a Training Session
-To run the Showdown Environment you need to run it through the ***gymnasium_envrionments*** package. The environment is not currently implemented - it is your job to complete the state, action, and reward functions for the agent to learn from. The current implementation shows a basic functional example but this is insufficient to learn from. 
+You should see the environment on screen with the robot in the image below trying to learn to run:
+
+<p align="center">
+    <img src="./media/cheetah.png" style="width: 60%;" />
+</p>
+
+# Showdown Training
+To run the Showdown Environment you need to run it through the ***gymnasium_envrionments*** package. The Showdown environment is not currently implemented - it is your job to complete the state, action, and reward functions for the agent to learn from. The current implementation shows a basic functional example but this is insufficient to learn from. 
 
 To train an agent on the environment you can use the command below. The ***domain*** defines the strength the pokemon teams your agent will learn to fight against and with. The ***task*** defines the type of expert agent that the agent will train to beat. In the case of this assignment your goal is to beat the ***max*** agent with bonus points for being able to compete against the ***simple*** agent. 
 
@@ -129,7 +132,7 @@ cd ~/compsys726/gymnasium_envrionments/scripts
 python run.py train cli --gym pokeenv --domain random --task max DQN
 ```
 
-### Viewing Training Results
+## Viewing Training Results
 The results of training the agents is saved into this folder: ***~/cares_rl_logs/*** by default. The structure of the results is saved as below.
 
 ```text
@@ -171,6 +174,28 @@ For full commands for plotting results data see the help data for plotter.
 
 ```
 python plotter.py -h
+```
+
+# Algorithm Selection
+As part of your project, you are required to select a reinforcement learning (RL) algorithm to train your agent to play Pokémon Showdown. You are responsible for justifying your choice. There is no single correct answer, choose the method you believe is most appropriate based on your understanding of the problem and the strengths of different RL algorithms. A wide range of algorithms are already implemented in the ***cares_reinforcement_learning*** library you are free to choose any of these algorithms (note the image based methods aren't useable due to no image representation being available). We are not expecting anyone to implement additional algorithms.
+
+All methods are implemented with their base configurations (network and hyperparameter settings) from their original paper implementations - you are free to consider changing these parameters if you feel it is required. The default values for all algorithms can be found [here](https://github.com/UoA-CARES/cares_reinforcement_learning/blob/main/cares_reinforcement_learning/util/configurations.py). **Do NOT edit** the configurations code directly to change hyperparameters. The run command can be used to adjust the various hyperparameters you can tune for each algorithm. The example below changes the **tau** value for DQN. 
+
+```
+cd ~/compsys726/gymnasium_envrionments/scripts
+python run.py train cli --gym pokeenv --domain random --task max DQN --tau 0.5
+```
+
+The logs will then record the configuration files you can then resuse using the command below. If you wish to edit the network structure itself you will need to edit the ***alg_config.json*** file - this can't be changed via command line. 
+
+***env_config*** - should be left untouched as it defines the task you are training on. This should ***NOT*** change.
+
+***traing_config*** - provides information about the training configuration for this run. It is not recommended that you modify these parameters.
+
+***alg_config.json*** - provides configurations for the algorithm, you can modify the hyperparameters and network architectures if you feel it is required here.
+
+```
+python run.py train config --data_path PATH_TO_RUN_CONFIGURATIONS_FOLDER
 ```
 
 # Implementing your Showdown Environment
