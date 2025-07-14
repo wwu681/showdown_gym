@@ -37,9 +37,10 @@ Create the base folder for working with this assignment. If you wish to change w
 mkdir ~/compsys726
 ```
 
-## Create Virtual Environment (Optional)
-It is strongly recommended that you use a virtual environment to better control the requirements used in this project.
+## Create Virtual Environment (PERSONAL MACHINE ONLY)
+It is strongly recommended that you use a virtual environment on your personal machine to better control the requirements used in this project.
 The instructions below will show you how to create a pyenv environment - you are free to use your preference of virtual environment though.
+If you are working on the University of Auckland lab machines ***skip this step*** as these configurations have already been tested. 
 
 ```
 python3 -m venv ~/venv/pokemon
