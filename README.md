@@ -129,7 +129,7 @@ To train an agent on the environment you can use the command below. The ***domai
 
 ```
 cd ~/compsys726/gymnasium_envrionments/scripts
-python run.py train cli --gym pokeenv --domain random --task max DQN
+python run.py train cli --gym showdown --domain random --task max DQN
 ```
 
 In the case of this assignment your goal is to beat the ***max*** agent (task) in the ***random*** domain. The random domain creates a random team for each player each game, meaning the agent will need to adapt to ***any*** Pokemon team it may use or compete against.
@@ -185,7 +185,7 @@ All methods are implemented with their base configurations (network and hyperpar
 
 ```
 cd ~/compsys726/gymnasium_envrionments/scripts
-python run.py train cli --gym pokeenv --domain random --task max DQN --tau 0.5
+python run.py train cli --gym showdown --domain random --task max DQN --tau 0.5
 ```
 
 The logs will then record the configuration files you can then resuse using the command below. If you wish to edit the network structure itself you will need to edit the ***alg_config.json*** file - this can't be changed via command line. 
