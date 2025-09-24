@@ -28,6 +28,7 @@ class BaseShowdownEnv(SinglesEnv):
             log_level=logging.ERROR,
             battle_format=battle_format,
             team=team,
+            open_timeout=None,
             ping_interval=None,
             ping_timeout=None,
         )
