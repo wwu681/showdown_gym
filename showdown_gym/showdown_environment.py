@@ -11,6 +11,7 @@ from poke_env import (
 )
 from poke_env.battle import AbstractBattle
 from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
+from poke_env.environment.singles_env import ObsType
 from poke_env.player.player import Player
 
 from showdown_gym.base_environment import BaseShowdownEnv
@@ -31,6 +32,40 @@ class ShowdownEnvironment(BaseShowdownEnv):
             account_name_two=account_name_two,
             team=team,
         )
+
+        self.rl_agent = account_name_one
+
+    def _get_action_size(self) -> int | None:
+        """
+        None just uses the default number of actions as laid out in process_action - 26 actions.
+
+        This defines the size of the action space for the agent - e.g. the output of the RL agent.
+
+        This should return the number of actions you wish to use if not using the default action scheme.
+        """
+        return 5  # Return None if action size is default
+
+    def process_action(self, action: np.int64) -> np.int64:
+        """
+        Returns the np.int64 relative to the given action.
+
+        The action mapping is as follows:
+        action = -2: default
+        action = -1: forfeit
+        0 <= action <= 5: switch
+        6 <= action <= 9: move
+        10 <= action <= 13: move and mega evolve
+        14 <= action <= 17: move and z-move
+        18 <= action <= 21: move and dynamax
+        22 <= action <= 25: move and terastallize
+
+        :param action: The action to take.
+        :type action: int64
+
+        :return: The battle order ID for the given action in context of the current battle.
+        :rtype: np.Int64
+        """
+        return action
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
