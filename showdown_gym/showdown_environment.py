@@ -43,7 +43,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         This should return the number of actions you wish to use if not using the default action scheme.
         """
-        return 5  # Return None if action size is default
+        return None  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
         """
