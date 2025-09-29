@@ -329,7 +329,9 @@ def calc_reward(self, battle: AbstractBattle) -> float:
 ### Action Space - process_action
 The ***_get_action_size*** method indicates how many actions are being learned by the agent - the default uses the 26 possible actions from Showdown directly. 
 
-The ***process_action*** function can be used to modify what the actual "action" is that the agent is learning. The value that is ultimatly passed back needs to align with the 26 possible actions as laid out in the comments - the Showdown action space. 
+The ***process_action*** function can be used to modify what the actual "action" is that the agent is learning. In simple terms - the actions from the agent can be higher level decisions of the overall agent decision making. However, the value that is ultimatly passed back needs to align with the 26 possible actions as laid out in the comments - the Showdown action space. You are ***unable*** to create actions beyond that which interact with the actual environment. 
+
+The simplest example is reducing the size of the action space to excldue certain Showdown Actions and remapping the agents action values to the appropriate Showdown values. 
 
 ```python
 def _get_action_size(self) -> int | None:
@@ -340,7 +342,7 @@ def _get_action_size(self) -> int | None:
 
     This should return the number of actions you wish to use if not using the default action scheme.
     """
-    return 5  # Return None if action size is default
+    return None  # Return None if action size is default
 
 def process_action(self, action: np.int64) -> np.int64:
     """
