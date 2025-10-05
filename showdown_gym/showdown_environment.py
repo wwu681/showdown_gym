@@ -82,7 +82,9 @@ class ShowdownEnvironment(BaseShowdownEnv):
         )
 
         # Reward for reducing the opponent's health
-        reward += np.sum(diff_health_opponent)
+        #reward += np.sum(diff_health_opponent)
+        if battle.finished:
+            reward += 10.0 if battle.won else -10.0
 
         return reward
 
@@ -99,7 +101,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Simply change this number to the number of features you want to include in the observation from embed_battle.
         # If you find a way to automate this, please let me know!
-        return 12
+        return 24
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
@@ -116,26 +118,25 @@ class ShowdownEnvironment(BaseShowdownEnv):
             np.float32: A 1D numpy array containing the state you want the agent to observe.
         """
 
+            # Our side
         health_team = [mon.current_hp_fraction for mon in battle.team.values()]
-        health_opponent = [
-            mon.current_hp_fraction for mon in battle.opponent_team.values()
-        ]
+        faint_team = [1.0 if mon.fainted else 0.0 for mon in battle.team.values()]
 
-        # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
-        if len(health_opponent) < len(health_team):
-            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
+        # Opponent side
+        health_opponent = [mon.current_hp_fraction for mon in battle.opponent_team.values()]
+        faint_opponent = [1.0 if mon.fainted else 0.0 for mon in battle.opponent_team.values()]
 
-        #########################################################################################################
-        # Caluclate the length of the final_vector and make sure to update the value in _observation_size above #
-        #########################################################################################################
+        # Pad opponent arrays to length 6 (in random battles you may see <6 known mons at times)
+        while len(health_opponent) < len(health_team):
+            health_opponent.append(1.0)   # assume full HP for unknowns
+            faint_opponent.append(0.0)
 
-        # Final vector - single array with health of both teams
-        final_vector = np.concatenate(
-            [
-                health_team,  # N components for the health of each pokemon
-                health_opponent,  # N components for the health of opponent pokemon
-            ]
-        )
+        final_vector = np.concatenate([
+            health_team,       # 6
+            faint_team,        # 6
+            health_opponent,   # 6
+            faint_opponent,    # 6
+        ]).astype(np.float32)
 
         return final_vector
 
