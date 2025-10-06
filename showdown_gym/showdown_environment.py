@@ -93,41 +93,64 @@ class ShowdownEnvironment(BaseShowdownEnv):
             float: The calculated reward based on the change in state of the battle.
         """
 
-        prior_battle = self._get_prior_battle(battle)
+        """Shaped reward: damage, survivability, KOs, hazards, terminal."""
+        prior = self._get_prior_battle(battle)
+        if prior is None:
+            return 0.0
+        r = 0.0
 
-        reward = 0.0
+        def total_hp(team):
+            return sum(mon.current_hp_fraction for mon in team.values())
 
-        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
-        health_opponent = [
-            mon.current_hp_fraction for mon in battle.opponent_team.values()
-        ]
+        opp_now, opp_prev = total_hp(battle.opponent_team), total_hp(prior.opponent_team)
+        our_now, our_prev = total_hp(battle.team), total_hp(prior.team)
 
-        # If the opponent has less than 6 Pokémon, fill the missing values with 1.0 (fraction of health)
-        if len(health_opponent) < len(health_team):
-            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
+        # Damage difference
+        r += (opp_prev - opp_now)              # damage dealt
+        r -= 0.5 * (our_prev - our_now)        # penalise taking damage
 
-        prior_health_opponent = []
-        if prior_battle is not None:
-            prior_health_opponent = [
-                mon.current_hp_fraction for mon in prior_battle.opponent_team.values()
-            ]
+        # KO bonuses
+        def faint_count(team):
+            return sum(1 for m in team.values() if m.fainted)
 
-        # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
-        if len(prior_health_opponent) < len(health_team):
-            prior_health_opponent.extend(
-                [1.0] * (len(health_team) - len(prior_health_opponent))
-            )
+        opp_faint_now, opp_faint_prev = faint_count(battle.opponent_team), faint_count(prior.opponent_team)
+        our_faint_now, our_faint_prev = faint_count(battle.team), faint_count(prior.team)
+        r += 1.0 * max(0, opp_faint_now - opp_faint_prev)
+        r -= 1.0 * max(0, our_faint_now - our_faint_prev)
 
-        diff_health_opponent = np.array(prior_health_opponent) - np.array(
-            health_opponent
-        )
+        # Hazard placement small bonus
+        def haz_score(side_conditions: dict) -> float:
+            """Convert side_conditions dict to a numeric hazard score."""
+            s = 0.0
+            # Try enum keys first, fallback to plain strings if needed
+            try:
+                from poke_env.data import SideCondition as SC
+                if side_conditions.get(SC.STEALTH_ROCK, 0): s += 0.1
+                s += 0.05 * min(side_conditions.get(SC.SPIKES, 0), 3) / 3.0
+                if side_conditions.get(SC.STICKY_WEB, 0): s += 0.1
+                s += 0.05 * min(side_conditions.get(SC.TOXIC_SPIKES, 0), 2) / 2.0
+            except Exception:
+                if side_conditions.get("stealth_rock", 0) or side_conditions.get("STEALTH_ROCK", 0): s += 0.1
+                s += 0.05 * ((side_conditions.get("spikes", 0) or side_conditions.get("SPIKES", 0) or 0) / 3.0)
+                if side_conditions.get("sticky_web", 0) or side_conditions.get("STICKY_WEB", 0): s += 0.1
+                s += 0.05 * ((side_conditions.get("toxic_spikes", 0) or side_conditions.get("TOXIC_SPIKES", 0) or 0) / 2.0)
+            return s
 
-        # Reward for reducing the opponent's health
-        #reward += np.sum(diff_health_opponent)
+        # Use dictionaries from the Battle object instead of .fields[]
+        our_h_now  = haz_score(battle.opponent_side_conditions)
+        our_h_prev = haz_score(prior.opponent_side_conditions)
+        r += (our_h_now - our_h_prev)
+
+
+
+        # small time penalty
+        r -= 0.01
+
+        # Terminal outcome
         if battle.finished:
-            reward += 10.0 if battle.won else -10.0
+            r += 10.0 if battle.won else -10.0
 
-        return reward
+        return float(r)
 
     def _observation_size(self) -> int:
         """
@@ -142,7 +165,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Simply change this number to the number of features you want to include in the observation from embed_battle.
         # If you find a way to automate this, please let me know!
-        return 24
+        return 45
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
@@ -159,27 +182,53 @@ class ShowdownEnvironment(BaseShowdownEnv):
             np.float32: A 1D numpy array containing the state you want the agent to observe.
         """
 
-            # Our side
-        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
-        faint_team = [1.0 if mon.fainted else 0.0 for mon in battle.team.values()]
+        """Enhanced state representation (~52 features)."""
+        ours = list(battle.team.values())
+        opps = list(battle.opponent_team.values())
 
-        # Opponent side
-        health_opponent = [mon.current_hp_fraction for mon in battle.opponent_team.values()]
-        faint_opponent = [1.0 if mon.fainted else 0.0 for mon in battle.opponent_team.values()]
+        def side_features(team, active):
+            hp = [mon.current_hp_fraction if mon is not None else 0.0 for mon in team]
+            faint = [1.0 if mon.fainted else 0.0 for mon in team]
+            active_flags = [1.0 if mon is active else 0.0 for mon in team]
+            for arr in (hp, faint, active_flags):
+                arr.extend([0.0] * (6 - len(arr)))
+            return hp + faint + active_flags  # 18 features per side
 
-        # Pad opponent arrays to length 6 (in random battles you may see <6 known mons at times)
-        while len(health_opponent) < len(health_team):
-            health_opponent.append(1.0)   # assume full HP for unknowns
-            faint_opponent.append(0.0)
+        our_vec = side_features(ours, battle.active_pokemon)
+        opp_vec = side_features(opps, battle.opponent_active_pokemon)
 
-        final_vector = np.concatenate([
-            health_team,       # 6
-            faint_team,        # 6
-            health_opponent,   # 6
-            faint_opponent,    # 6
-        ]).astype(np.float32)
+        # simple hazard encoding
+# --- replace your hazard helpers with this ---
 
-        return final_vector
+        def _hazard_vec_from_side_conditions(sc) -> list[float]:
+            """Map side_conditions dict to [SR, Spikes(0-1), Web, ToxicSpikes(0-1)]."""
+            try:
+                # Prefer enums if available
+                from poke_env.data import SideCondition as SC
+                sr   = 1.0 if (sc.get(SC.STEALTH_ROCK, 0)     > 0) else 0.0
+                spk  = min(sc.get(SC.SPIKES, 0), 3) / 3.0
+                web  = 1.0 if (sc.get(SC.STICKY_WEB, 0)       > 0) else 0.0
+                tspk = min(sc.get(SC.TOXIC_SPIKES, 0), 2) / 2.0
+            except Exception:
+                # Fallback if enums aren’t present; keys may be strings
+                sr   = 1.0 if (sc.get("stealth_rock", 0)  or sc.get("STEALTH_ROCK", 0)) else 0.0
+                spk  = (sc.get("spikes", 0) or sc.get("SPIKES", 0) or 0) / 3.0
+                web  = 1.0 if (sc.get("sticky_web", 0)    or sc.get("STICKY_WEB", 0))   else 0.0
+                tspk = (sc.get("toxic_spikes", 0) or sc.get("TOXIC_SPIKES", 0) or 0) / 2.0
+            return [sr, float(spk), web, float(tspk)]
+
+
+        our_haz = _hazard_vec_from_side_conditions(battle.side_conditions)
+        opp_haz = _hazard_vec_from_side_conditions(battle.opponent_side_conditions)
+
+
+        turn_scaled = min(battle.turn, 50) / 50.0
+
+        final_vec = np.array(
+            our_vec + opp_vec + our_haz + opp_haz + [turn_scaled],
+            dtype=np.float32,
+        )
+        return final_vec
 
 
 ########################################
