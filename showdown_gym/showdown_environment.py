@@ -147,6 +147,12 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self.rl_agent = account_name_one
         self.switches_this_episode = 0
         self.good_switches = 0
+        # remember last decision context
+        self._last_action = None
+        self._last_avail_moves = None
+        self._last_opp_types = None
+        self.MOVE_BASE = 6  # 0..5 = switches, >=6 = moves (matching your env’s mapping)
+
 
 
     def _get_action_size(self) -> int | None:
@@ -160,6 +166,17 @@ class ShowdownEnvironment(BaseShowdownEnv):
         return None  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
+                # --- cache decision-time info for action-aware reward ---
+        self._last_action = int(action)
+        try:
+            b = self.battle1  # if your attr name differs, swap it here
+            self._last_avail_moves = list(getattr(b, "available_moves", []) or [])
+            opp_now = getattr(b, "opponent_active_pokemon", None)
+            self._last_opp_types = _types_of(opp_now) if opp_now is not None else []
+        except Exception:
+            self._last_avail_moves = None
+            self._last_opp_types = None
+
         """
         Returns the np.int64 relative to the given action.
 
@@ -172,12 +189,6 @@ class ShowdownEnvironment(BaseShowdownEnv):
         14 <= action <= 17: move and z-move
         18 <= action <= 21: move and dynamax
         22 <= action <= 25: move and terastallize
-
-        :param action: The action to take.
-        :type action: int64
-
-        :return: The battle order ID for the given action in context of the current battle.
-        :rtype: np.Int64
         """
         return action
 
@@ -265,6 +276,13 @@ class ShowdownEnvironment(BaseShowdownEnv):
         r += 1.0 * max(0, opp_faint_now - opp_faint_prev)
         r -= 1.0 * max(0, our_faint_now - our_faint_prev)
 
+                # slight penalty if we stayed in and produced no damage/no KO this step
+        damage_dealt = opp_hp_prev - opp_hp_now
+        if not switched:
+            opp_faint_inc = max(0, opp_faint_now - opp_faint_prev)
+            if opp_faint_inc == 0 and damage_dealt <= 0.0:
+                r -= 0.05
+
         # --- hazard placement small bonus (our hazards on their side) ---
         def haz_score(side_conditions: dict) -> float:
             s = 0.0
@@ -303,6 +321,75 @@ class ShowdownEnvironment(BaseShowdownEnv):
         # bonus if matchup improved a lot since last step
         if now_delta - prev_delta >= 0.5:
             r += 0.5
+
+                # === ACTION-AWARE MOVE EFFECTIVENESS SHAPING ===
+        try:
+            last_action = getattr(self, "_last_action", None)
+            last_moves  = getattr(self, "_last_avail_moves", None) or []
+            last_opp_ts = getattr(self, "_last_opp_types", []) or []
+
+            chose_move = (last_action is not None) and (last_action >= self.MOVE_BASE)
+            if chose_move:
+                mv_idx = last_action - self.MOVE_BASE
+                chosen_mv = last_moves[mv_idx] if 0 <= mv_idx < len(last_moves) else None
+
+                # effectiveness of the chosen move vs opp types (at decision time)
+                chosen_eff = 1.0
+                if chosen_mv is not None and getattr(chosen_mv, "type", None) is not None:
+                    try:
+                        mv_type_name = str(chosen_mv.type.name).lower()
+                    except Exception:
+                        mv_type_name = None
+                    if mv_type_name in IDX and last_opp_ts:
+                        eff = 1.0
+                        for t in last_opp_ts:
+                            eff *= TYPE_CHART[IDX[mv_type_name], IDX[t]]
+                        chosen_eff = float(eff)
+
+                # best available effectiveness among visible moves
+                best_eff = 1.0
+                for mv in last_moves[:4]:
+                    try:
+                        tname = str(mv.type.name).lower() if mv.type is not None else None
+                    except Exception:
+                        tname = None
+                    if tname in IDX and last_opp_ts:
+                        eff = 1.0
+                        for t in last_opp_ts:
+                            eff *= TYPE_CHART[IDX[tname], IDX[t]]
+                        best_eff = max(best_eff, float(eff))
+
+                # shaping rules
+                if chosen_eff == 0.0:
+                    r -= 0.15            # immunity → clear penalty
+                elif chosen_eff < 1.0:
+                    r -= 0.02            # not very effective
+                elif chosen_eff >= 2.0:
+                    r += 0.05 if chosen_eff < 4.0 else 0.08  # super-effective / 4x
+
+                # tie-breaker if we chose among the best-effective options
+                if chosen_eff >= 1.0 and abs(chosen_eff - best_eff) < 1e-6 and best_eff > 1.0:
+                    r += 0.03
+            else:
+                # likely a switch: bonus if literally all visible moves looked bad (<1x)
+                if getattr(self, "_last_avail_moves", None) is not None:
+                    all_bad = True
+                    for mv in self._last_avail_moves[:4]:
+                        try:
+                            tname = str(mv.type.name).lower() if mv.type is not None else None
+                        except Exception:
+                            tname = None
+                        if tname in IDX and self._last_opp_types:
+                            eff = 1.0
+                            for t in self._last_opp_types:
+                                eff *= TYPE_CHART[IDX[tname], IDX[t]]
+                            if eff >= 1.0:
+                                all_bad = False
+                                break
+                    if all_bad and switched:
+                        r += 0.08  # good instinct: switch when every move is bad
+        except Exception:
+            pass
 
         # --- small time penalty ---
         r -= 0.01
