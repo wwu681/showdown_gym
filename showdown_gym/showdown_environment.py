@@ -177,6 +177,37 @@ class ShowdownEnvironment(BaseShowdownEnv):
             self._last_avail_moves = None
             self._last_opp_types = None
 
+        # --- immune-move shield: remap 0x moves to best available ---
+        try:
+            if int(action) >= self.MOVE_BASE and self._last_avail_moves:
+                mv_idx = int(action) - self.MOVE_BASE
+                chosen_mv = self._last_avail_moves[mv_idx] if 0 <= mv_idx < len(self._last_avail_moves) else None
+
+                def eff_of(mv):
+                    try:
+                        tname = str(mv.type.name).lower() if mv.type is not None else None
+                    except Exception:
+                        tname = None
+                    if not (tname in IDX and self._last_opp_types):
+                        return 1.0
+                    e = 1.0
+                    for t in self._last_opp_types:
+                        e *= TYPE_CHART[IDX[tname], IDX[t]]
+                    return float(e)
+
+                chosen_eff = eff_of(chosen_mv) if chosen_mv is not None else 1.0
+                if chosen_eff == 0.0:
+                    best_i, best_eff = None, -1.0
+                    for i, mv in enumerate(self._last_avail_moves[:4]):
+                        e = eff_of(mv)
+                        if e > best_eff:
+                            best_i, best_eff = i, e
+                    if best_i is not None and best_i != mv_idx:
+                        self._shield_hits = getattr(self, "_shield_hits", 0) + 1
+                        return np.int64(self.MOVE_BASE + best_i)
+        except Exception:
+            pass
+        
         """
         Returns the np.int64 relative to the given action.
 
@@ -248,13 +279,26 @@ class ShowdownEnvironment(BaseShowdownEnv):
                 # count switch
                 switched = True
                 self.switches_this_episode = getattr(self, "switches_this_episode", 0) + 1
-                # count "good" switch (improved matchup by ≥ 1.0)
-                prev_delta = _safe_log2(_type_multiplier(_types_of(me_prev), _types_of(opp_prev))) \
-                        - _safe_log2(_type_multiplier(_types_of(opp_prev), _types_of(me_prev)))
-                now_delta  = _safe_log2(_type_multiplier(_types_of(me_now),  _types_of(opp_now))) \
-                        - _safe_log2(_type_multiplier(_types_of(opp_now),  _types_of(me_now)))
-                if now_delta - prev_delta >= 1.0:
-                    self.good_switches = getattr(self, "good_switches", 0) + 1
+
+                # --- only evaluate "good switch" if both sides have known types ---
+                my_prev_t  = _types_of(me_prev)  if me_prev  is not None else []
+                opp_prev_t = _types_of(opp_prev) if opp_prev is not None else []
+                my_now_t   = _types_of(me_now)   if me_now   is not None else []
+                opp_now_t  = _types_of(opp_now)  if opp_now  is not None else []
+
+                if (my_now_t or opp_now_t) and (my_prev_t or opp_prev_t):
+                    prev_delta = _safe_log2(_type_multiplier(my_prev_t, opp_prev_t)) \
+                            - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
+                    now_delta  = _safe_log2(_type_multiplier(my_now_t,  opp_now_t)) \
+                            - _safe_log2(_type_multiplier(opp_now_t, my_now_t))
+                    
+                                        # --- graded reward for improving matchup ---
+                    improvement = now_delta - prev_delta
+                    r += 0.1 * float(np.clip(improvement, 0.0, 1.0))  # up to +0.1 reward per good switch
+
+                    # mark as "good" if matchup improved by ≥ 0.5 (≈ 1.4×)
+                    if (now_delta - prev_delta) >= 0.5:
+                        self.good_switches = getattr(self, "good_switches", 0) + 1
 
         # --- damage / survivability ---
         def total_hp(team):
@@ -316,7 +360,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
                 - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
 
         # encourage staying in good matchups
-        r += 0.1 * float(np.clip(now_delta, -1.5, 1.5))
+        r += 0.05 * float(np.clip(now_delta, -1.0, 1.0))
 
         # bonus if matchup improved a lot since last step
         if now_delta - prev_delta >= 0.5:
@@ -392,14 +436,18 @@ class ShowdownEnvironment(BaseShowdownEnv):
             pass
 
         # --- small time penalty ---
-        r -= 0.01
+        r -= 0.05
 
                 # persistence: reward staying in good matchup on consecutive steps
         if now_delta >= 0.25 and prev_delta >= 0.25:
             r += 0.05
 
         if switched:
-            r -= 0.02  # keeps the agent from ping-ponging
+            r -= 0.01  # keeps the agent from ping-ponging
+
+        if not switched:
+            if opp_faint_inc == 0 and (opp_hp_prev - opp_hp_now) <= 0.0:
+                r -= 0.05
 
         # --- terminal outcome ---
         if battle.finished:
