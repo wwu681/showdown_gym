@@ -152,6 +152,19 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self._last_avail_moves = None
         self._last_opp_types = None
         self.MOVE_BASE = 6  # 0..5 = switches, >=6 = moves (matching your env’s mapping)
+        # episode metrics
+        self._immune_hits = 0          # times agent *picked* a 0x move
+        self._shield_hits = 0          # times shield remapped a 0x move
+        self._move_actions = 0         # number of times agent chose a move (>= MOVE_BASE)
+        self._no_damage_steps = 0      # steps with no damage & no KO when we didn't switch
+        self._attack_turns = 0         # steps where we stayed in (not switched)
+        # anti-ping-pong + stall
+        self._switch_streak = 0         # consecutive switches
+        self._last_species_before = None
+        self._last_switch_turn = -999
+        self._no_damage_streak = 0      # consecutive no-damage attack turns
+
+
 
 
 
@@ -166,10 +179,10 @@ class ShowdownEnvironment(BaseShowdownEnv):
         return None  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
-                # --- cache decision-time info for action-aware reward ---
+        # --- cache decision-time info for action-aware reward ---
         self._last_action = int(action)
         try:
-            b = self.battle1  # if your attr name differs, swap it here
+            b = self.battle1
             self._last_avail_moves = list(getattr(b, "available_moves", []) or [])
             opp_now = getattr(b, "opponent_active_pokemon", None)
             self._last_opp_types = _types_of(opp_now) if opp_now is not None else []
@@ -177,51 +190,51 @@ class ShowdownEnvironment(BaseShowdownEnv):
             self._last_avail_moves = None
             self._last_opp_types = None
 
-        # --- immune-move shield: remap 0x moves to best available ---
+        a = int(action)
+
+        # --- collapse 26 actions -> 10 (6 switches + 4 base moves) ---
+        if a >= self.MOVE_BASE:
+            base_slot = (a - self.MOVE_BASE) % 4
+            a = self.MOVE_BASE + base_slot
+
+        # helper to compute effectiveness vs opp at decision-time
+        def eff_of(mv):
+            try:
+                tname = str(mv.type.name).lower() if mv.type is not None else None
+            except Exception:
+                tname = None
+            if not (tname in IDX and self._last_opp_types):
+                return 1.0
+            e = 1.0
+            for t in self._last_opp_types:
+                e *= TYPE_CHART[IDX[tname], IDX[t]]
+            return float(e)
+
+        # --- immune-move shield + metrics ---
         try:
-            if int(action) >= self.MOVE_BASE and self._last_avail_moves:
-                mv_idx = int(action) - self.MOVE_BASE
+            if a >= self.MOVE_BASE and self._last_avail_moves:
+                self._move_actions += 1
+                mv_idx = a - self.MOVE_BASE
                 chosen_mv = self._last_avail_moves[mv_idx] if 0 <= mv_idx < len(self._last_avail_moves) else None
-
-                def eff_of(mv):
-                    try:
-                        tname = str(mv.type.name).lower() if mv.type is not None else None
-                    except Exception:
-                        tname = None
-                    if not (tname in IDX and self._last_opp_types):
-                        return 1.0
-                    e = 1.0
-                    for t in self._last_opp_types:
-                        e *= TYPE_CHART[IDX[tname], IDX[t]]
-                    return float(e)
-
                 chosen_eff = eff_of(chosen_mv) if chosen_mv is not None else 1.0
+
                 if chosen_eff == 0.0:
+                    self._immune_hits += 1  # we *picked* a 0x move
+                    # remap to best available (shield)
                     best_i, best_eff = None, -1.0
                     for i, mv in enumerate(self._last_avail_moves[:4]):
                         e = eff_of(mv)
                         if e > best_eff:
                             best_i, best_eff = i, e
                     if best_i is not None and best_i != mv_idx:
-                        self._shield_hits = getattr(self, "_shield_hits", 0) + 1
-                        return np.int64(self.MOVE_BASE + best_i)
+                        self._shield_hits += 1
+                        a = self.MOVE_BASE + best_i
         except Exception:
             pass
-        
-        """
-        Returns the np.int64 relative to the given action.
 
-        The action mapping is as follows:
-        action = -2: default
-        action = -1: forfeit
-        0 <= action <= 5: switch
-        6 <= action <= 9: move
-        10 <= action <= 13: move and mega evolve
-        14 <= action <= 17: move and z-move
-        18 <= action <= 21: move and dynamax
-        22 <= action <= 25: move and terastallize
-        """
-        return action
+        return np.int64(a)
+
+
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
@@ -246,6 +259,19 @@ class ShowdownEnvironment(BaseShowdownEnv):
             info[agent]["switches"] = getattr(self, "switches_this_episode", 0)
             info[agent]["good_switches"] = getattr(self, "good_switches", 0)
 
+                    # --- new metrics ---
+            imm = getattr(self, "_immune_hits", 0)
+            mvn = getattr(self, "_move_actions", 0)
+            nds = getattr(self, "_no_damage_steps", 0)
+            atk = getattr(self, "_attack_turns", 0)
+            sh  = getattr(self, "_shield_hits", 0)
+
+            info[agent]["immune_hits"] = imm
+            info[agent]["shield_hits"] = sh
+            info[agent]["no_damage_steps"] = nds
+            info[agent]["immune_rate"] = (imm / mvn) if mvn > 0 else 0.0
+            info[agent]["no_damage_rate"] = (nds / atk) if atk > 0 else 0.0
+
         return info
 
 
@@ -256,7 +282,16 @@ class ShowdownEnvironment(BaseShowdownEnv):
         """
         prior = self._get_prior_battle(battle)
         if prior is None:
+            # new episode: reset metrics
+            self._immune_hits = 0
+            self._shield_hits = 0
+            self._move_actions = 0
+            self._no_damage_steps = 0
+            self._attack_turns = 0
+            self.switches_this_episode = 0
+            self.good_switches = 0
             return 0.0
+
 
         r = 0.0
         switched = False
@@ -275,12 +310,30 @@ class ShowdownEnvironment(BaseShowdownEnv):
         if me_prev is not None and me_now is not None:
             our_faints_prev = sum(1 for m in prior.team.values()  if m.fainted)
             our_faints_now  = sum(1 for m in battle.team.values() if m.fainted)
+
             if _species(me_prev) != _species(me_now) and our_faints_now == our_faints_prev:
                 # count switch
                 switched = True
                 self.switches_this_episode = getattr(self, "switches_this_episode", 0) + 1
 
-                # --- only evaluate "good switch" if both sides have known types ---
+                # --- consecutive-switch streak (for adaptive tax) ---
+                self._switch_streak = getattr(self, "_switch_streak", 0) + 1
+                turn_now = getattr(battle, "turn", 0)
+
+                # --- anti ping-pong: penalise switching back within 2 turns ---
+                try:
+                    curr = _species(me_now)
+                    prev_prev = getattr(self, "_last_species_before", None)
+                    if prev_prev is not None and curr == prev_prev and (turn_now - getattr(self, "_last_switch_turn", -999)) <= 2:
+                        # coming back to what we had two turns ago → ping-pong
+                        r -= 0.06
+                except Exception:
+                    pass
+
+                self._last_species_before = _species(me_prev)
+                self._last_switch_turn = turn_now
+
+                # --- good switch detection (types known + lowered threshold 0.5) ---
                 my_prev_t  = _types_of(me_prev)  if me_prev  is not None else []
                 opp_prev_t = _types_of(opp_prev) if opp_prev is not None else []
                 my_now_t   = _types_of(me_now)   if me_now   is not None else []
@@ -291,14 +344,16 @@ class ShowdownEnvironment(BaseShowdownEnv):
                             - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
                     now_delta  = _safe_log2(_type_multiplier(my_now_t,  opp_now_t)) \
                             - _safe_log2(_type_multiplier(opp_now_t, my_now_t))
-                    
-                                        # --- graded reward for improving matchup ---
-                    improvement = now_delta - prev_delta
-                    r += 0.1 * float(np.clip(improvement, 0.0, 1.0))  # up to +0.1 reward per good switch
 
-                    # mark as "good" if matchup improved by ≥ 0.5 (≈ 1.4×)
-                    if (now_delta - prev_delta) >= 0.5:
+                    improvement = now_delta - prev_delta
+                    # small graded reward (kept small to avoid reward-hacking)
+                    r += 0.05 * float(np.clip(improvement, 0.0, 1.0))
+                    if improvement >= 0.5:
                         self.good_switches = getattr(self, "good_switches", 0) + 1
+            else:
+                # we stayed in → reset streak
+                self._switch_streak = 0
+
 
         # --- damage / survivability ---
         def total_hp(team):
@@ -320,12 +375,31 @@ class ShowdownEnvironment(BaseShowdownEnv):
         r += 1.0 * max(0, opp_faint_now - opp_faint_prev)
         r -= 1.0 * max(0, our_faint_now - our_faint_prev)
 
-                # slight penalty if we stayed in and produced no damage/no KO this step
+        # --- "no-damage" metrics + penalties / break-stall bonus ---
         damage_dealt = opp_hp_prev - opp_hp_now
         if not switched:
+            self._attack_turns += 1
             opp_faint_inc = max(0, opp_faint_now - opp_faint_prev)
+
             if opp_faint_inc == 0 and damage_dealt <= 0.0:
+                # still no progress this turn
+                self._no_damage_steps += 1
+                self._no_damage_streak = getattr(self, "_no_damage_streak", 0) + 1
+
+                # base penalty (you had this)
                 r -= 0.05
+                # extra nudge if we’re stuck for multiple consecutive attack turns
+                r -= 0.02 * float(min(3, self._no_damage_streak))   # up to -0.06 extra
+            else:
+                # we finally made progress → tiny break-stall bonus, reset streak
+                if getattr(self, "_no_damage_streak", 0) >= 2:
+                    r += 0.04
+                self._no_damage_streak = 0
+        else:
+            # switching resets the no-damage streak (we're changing plan)
+            self._no_damage_streak = 0
+
+
 
         # --- hazard placement small bonus (our hazards on their side) ---
         def haz_score(side_conditions: dict) -> float:
@@ -359,14 +433,12 @@ class ShowdownEnvironment(BaseShowdownEnv):
         prev_delta = _safe_log2(_type_multiplier(my_prev_t, opp_prev_t)) \
                 - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
 
-        # encourage staying in good matchups
-        r += 0.05 * float(np.clip(now_delta, -1.0, 1.0))
+        # --- potential-based shaping on matchup delta (policy-invariant) ---
+        phi_prev = float(np.clip(prev_delta, -1.5, 1.5))
+        phi_now  = float(np.clip(now_delta,  -1.5, 1.5))
+        gamma_p  = 0.99  # match your learner gamma
+        r += 0.2 * (gamma_p * phi_now - phi_prev)
 
-        # bonus if matchup improved a lot since last step
-        if now_delta - prev_delta >= 0.5:
-            r += 0.5
-
-                # === ACTION-AWARE MOVE EFFECTIVENESS SHAPING ===
         try:
             last_action = getattr(self, "_last_action", None)
             last_moves  = getattr(self, "_last_avail_moves", None) or []
@@ -435,15 +507,18 @@ class ShowdownEnvironment(BaseShowdownEnv):
         except Exception:
             pass
 
-        # --- small time penalty ---
-        r -= 0.05
 
                 # persistence: reward staying in good matchup on consecutive steps
         if now_delta >= 0.25 and prev_delta >= 0.25:
-            r += 0.05
+            r += 0.03
 
+        # --- small time penalty ---
+        r -= 0.005
+
+        # adaptive switch tax: grows with streak, caps quickly
         if switched:
-            r -= 0.01  # keeps the agent from ping-ponging
+            r -= 0.01 + 0.004 * float(min(5, getattr(self, "_switch_streak", 0)))
+
 
         if not switched:
             if opp_faint_inc == 0 and (opp_hp_prev - opp_hp_now) <= 0.0:
