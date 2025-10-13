@@ -164,6 +164,8 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self._last_switch_turn = -999
         self._no_damage_streak = 0      # consecutive no-damage attack turns
         self._last_battle_tag = None
+        self._switched_last_turn = False
+
 
 
 
@@ -237,6 +239,38 @@ class ShowdownEnvironment(BaseShowdownEnv):
                         a = self.MOVE_BASE + best_i
         except Exception:
             pass
+
+        # --- block back-to-back switches unless all moves are <1× ---
+        try:
+            want_switch = (a < self.MOVE_BASE)
+            if want_switch and getattr(self, "_switched_last_turn", False):
+                # check if all visible moves are <1× vs current opp
+                def eff_of(mv):
+                    try:
+                        tname = str(mv.type.name).lower() if mv.type is not None else None
+                    except Exception:
+                        tname = None
+                    if not (tname in IDX and self._last_opp_types):
+                        return 1.0
+                    e = 1.0
+                    for t in self._last_opp_types:
+                        e *= TYPE_CHART[IDX[tname], IDX[t]]
+                    return float(e)
+
+                all_bad = True
+                best_i, best_eff = 0, -1.0
+                for i, mv in enumerate((self._last_avail_moves or [])[:4]):
+                    e = eff_of(mv)
+                    if e >= 1.0: all_bad = False
+                    if e > best_eff:
+                        best_i, best_eff = i, e
+
+                if not all_bad:
+                    # force a best move instead of a second consecutive switch
+                    a = self.MOVE_BASE + best_i
+        except Exception:
+            pass
+
 
         return np.int64(a)
 
@@ -542,6 +576,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         if battle.finished:
             r += 10.0 if battle.won else -10.0
 
+        self._switched_last_turn = bool(switched)
         return float(r)
 
 
