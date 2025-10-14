@@ -409,29 +409,26 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
 
         # --- damage / survivability ---
-        def total_hp(team):
-            return sum(mon.current_hp_fraction for mon in team.values())
-
+        def total_hp(team): return sum(mon.current_hp_fraction for mon in team.values())
         opp_hp_now, opp_hp_prev = total_hp(battle.opponent_team), total_hp(prior.opponent_team)
         our_hp_now, our_hp_prev = total_hp(battle.team),           total_hp(prior.team)
 
-        r += (opp_hp_prev - opp_hp_now)           # damage dealt
-        r -= 0.5 * (our_hp_prev - our_hp_now)     # penalise taking damage
+        damage_dealt = opp_hp_prev - opp_hp_now
+        damage_taken = our_hp_prev - our_hp_now
+
+        r  = 1.0 * damage_dealt           # every chip on them counts
+        r -= 0.6 * damage_taken           # getting hit hurts a bit more than before
 
         # --- KO bonuses ---
-        def faint_count(team):
-            return sum(1 for m in team.values() if m.fainted)
-
+        def faint_count(team): return sum(1 for m in team.values() if m.fainted)
         opp_faint_now, opp_faint_prev = faint_count(battle.opponent_team), faint_count(prior.opponent_team)
         our_faint_now, our_faint_prev = faint_count(battle.team),           faint_count(prior.team)
 
-        r += 1.0 * max(0, opp_faint_now - opp_faint_prev)
-        r -= 1.0 * max(0, our_faint_now - our_faint_prev)
+        r += 1.2 * max(0, opp_faint_now - opp_faint_prev)   # reward KOs slightly stronger
+        r -= 1.2 * max(0, our_faint_now - our_faint_prev)
 
-        # --- "no-damage" metrics + penalties / break-stall bonus ---
-        damage_dealt = opp_hp_prev - opp_hp_now
+        # --- no-damage metrics + penalty (only when we chose a move and stayed in) ---
         chose_move = (getattr(self, "_last_action", None) is not None) and (self._last_action >= self.MOVE_BASE)
-
         if chose_move and not switched:
             self._attack_turns += 1
             opp_faint_inc = max(0, opp_faint_now - opp_faint_prev)
@@ -439,53 +436,16 @@ class ShowdownEnvironment(BaseShowdownEnv):
             if opp_faint_inc == 0 and damage_dealt <= EPS:
                 self._no_damage_steps += 1
                 self._no_damage_streak = getattr(self, "_no_damage_streak", 0) + 1
-                r -= 0.05
-                r -= 0.02 * float(min(3, self._no_damage_streak))  # up to -0.06 extra if stalling
+                r -= 0.07                                 # stronger “don’t waste a turn”
+                r -= 0.02 * float(min(3, self._no_damage_streak))
             else:
                 if getattr(self, "_no_damage_streak", 0) >= 2:
-                    r += 0.04  # break-stall bonus
+                    r += 0.06                             # breaking stall matters more here
                 self._no_damage_streak = 0
         else:
             self._no_damage_streak = 0
 
-        # --- hazard placement small bonus (our hazards on their side) ---
-        def haz_score(side_conditions: dict) -> float:
-            s = 0.0
-            try:
-                from poke_env.data import SideCondition as SC
-                if side_conditions.get(SC.STEALTH_ROCK, 0): s += 0.1
-                s += 0.05 * min(side_conditions.get(SC.SPIKES, 0), 3) / 3.0
-                if side_conditions.get(SC.STICKY_WEB, 0): s += 0.1
-                s += 0.05 * min(side_conditions.get(SC.TOXIC_SPIKES, 0), 2) / 2.0
-            except Exception:
-                if side_conditions.get("stealth_rock", 0) or side_conditions.get("STEALTH_ROCK", 0): s += 0.1
-                s += 0.05 * ((side_conditions.get("spikes", 0) or side_conditions.get("SPIKES", 0) or 0) / 3.0)
-                if side_conditions.get("sticky_web", 0) or side_conditions.get("STICKY_WEB", 0): s += 0.1
-                s += 0.05 * ((side_conditions.get("toxic_spikes", 0) or side_conditions.get("TOXIC_SPIKES", 0) or 0) / 2.0)
-            return s
-
-        # hazards that we applied to their side
-        our_h_now  = haz_score(battle.opponent_side_conditions)
-        our_h_prev = haz_score(prior.opponent_side_conditions)
-        r += (our_h_now - our_h_prev)
-
-        # --- small per-step type-matchup encouragement ---
-        my_now_t   = _types_of(me_now)   if me_now   is not None else []
-        opp_now_t  = _types_of(opp_now)  if opp_now  is not None else []
-        my_prev_t  = _types_of(me_prev)  if me_prev  is not None else []
-        opp_prev_t = _types_of(opp_prev) if opp_prev is not None else []
-
-        now_delta  = _safe_log2(_type_multiplier(my_now_t,  opp_now_t)) \
-                - _safe_log2(_type_multiplier(opp_now_t, my_now_t))
-        prev_delta = _safe_log2(_type_multiplier(my_prev_t, opp_prev_t)) \
-                - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
-
-        # --- potential-based shaping on matchup delta (policy-invariant) ---
-        phi_prev = float(np.clip(prev_delta, -1.5, 1.5))
-        phi_now  = float(np.clip(now_delta,  -1.5, 1.5))
-        gamma_p  = 0.99  # match your learner gamma
-        r += 0.2 * (gamma_p * phi_now - phi_prev)
-
+        # --- action-aware move shaping (tiny; keep learning signal) ---
         try:
             last_action = getattr(self, "_last_action", None)
             last_moves  = getattr(self, "_last_avail_moves", None) or []
@@ -496,88 +456,45 @@ class ShowdownEnvironment(BaseShowdownEnv):
                 mv_idx = last_action - self.MOVE_BASE
                 chosen_mv = last_moves[mv_idx] if 0 <= mv_idx < len(last_moves) else None
 
-                # effectiveness of the chosen move vs opp types (at decision time)
+                def eff_of_name(tname):
+                    if not (tname in IDX and last_opp_ts): return 1.0
+                    e = 1.0
+                    for t in last_opp_ts:
+                        e *= TYPE_CHART[IDX[tname], IDX[t]]
+                    return float(e)
+
                 chosen_eff = 1.0
                 if chosen_mv is not None and getattr(chosen_mv, "type", None) is not None:
-                    try:
-                        mv_type_name = str(chosen_mv.type.name).lower()
-                    except Exception:
-                        mv_type_name = None
-                    if mv_type_name in IDX and last_opp_ts:
-                        eff = 1.0
-                        for t in last_opp_ts:
-                            eff *= TYPE_CHART[IDX[mv_type_name], IDX[t]]
-                        chosen_eff = float(eff)
+                    try: tname = str(chosen_mv.type.name).lower()
+                    except Exception: tname = None
+                    chosen_eff = eff_of_name(tname)
 
-                # best available effectiveness among visible moves
                 best_eff = 1.0
                 for mv in last_moves[:4]:
-                    try:
-                        tname = str(mv.type.name).lower() if mv.type is not None else None
-                    except Exception:
-                        tname = None
-                    if tname in IDX and last_opp_ts:
-                        eff = 1.0
-                        for t in last_opp_ts:
-                            eff *= TYPE_CHART[IDX[tname], IDX[t]]
-                        best_eff = max(best_eff, float(eff))
+                    try: tn = str(mv.type.name).lower() if mv.type is not None else None
+                    except Exception: tn = None
+                    best_eff = max(best_eff, eff_of_name(tn))
 
-                # shaping rules
-                if chosen_eff == 0.0:
-                    r -= 0.15                 # immune
-                elif chosen_eff < 1.0:
-                    r -= 0.03                 # resisted
-                elif chosen_eff >= 4.0:
-                    r += 0.10                 # 4x SE
-                elif chosen_eff >= 2.0:
-                    r += 0.06                 # 2x SE
-
-                # tie-breaker if we chose among best-effective options (>=1x)
+                if chosen_eff == 0.0:           r -= 0.15
+                elif chosen_eff < 1.0:          r -= 0.03
+                elif chosen_eff >= 4.0:         r += 0.06   # lighter than before
+                elif chosen_eff >= 2.0:         r += 0.04
                 if chosen_eff >= 1.0 and abs(chosen_eff - best_eff) < 1e-6 and best_eff > 1.0:
-                    r += 0.03
-
-            else:
-                # likely a switch: bonus if literally all visible moves looked bad (<1x)
-                if getattr(self, "_last_avail_moves", None) is not None:
-                    all_bad = True
-                    for mv in self._last_avail_moves[:4]:
-                        try:
-                            tname = str(mv.type.name).lower() if mv.type is not None else None
-                        except Exception:
-                            tname = None
-                        if tname in IDX and self._last_opp_types:
-                            eff = 1.0
-                            for t in self._last_opp_types:
-                                eff *= TYPE_CHART[IDX[tname], IDX[t]]
-                            if eff >= 1.0:
-                                all_bad = False
-                                break
-                    if all_bad and switched:
-                        r += 0.08  # good instinct: switch when every move is bad
+                    r += 0.02
         except Exception:
             pass
 
-
-                # persistence: reward staying in good matchup on consecutive steps
-        if now_delta >= 0.25 and prev_delta >= 0.25:
-            r += 0.03
-
-        # --- small time penalty ---
-        r -= 0.005
-
-        # adaptive switch tax: grows with streak, caps quickly
+        # --- gentle taxes (small) ---
+        r -= 0.003                              # time pressure
         if switched:
-            r -= 0.012 + 0.006 * float(min(5, getattr(self, "_switch_streak", 0)))
+            r -= 0.01                            # flat switch cost
 
-
-
-
-        # --- terminal outcome ---
+        # --- terminal outcome (make wins matter) ---
         if battle.finished:
-            r += 10.0 if battle.won else -10.0
+            r += 12.0 if battle.won else -12.0
 
-        self._switched_last_turn = bool(switched)
         return float(r)
+
 
 
     def _observation_size(self) -> int:
