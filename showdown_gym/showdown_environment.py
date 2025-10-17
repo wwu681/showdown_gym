@@ -166,11 +166,6 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self._last_battle_tag = None
         self._switched_last_turn = False
 
-
-
-
-
-
     def _get_action_size(self) -> int | None:
         """
         None just uses the default number of actions as laid out in process_action - 26 actions.
@@ -182,7 +177,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         return None  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
-        # --- episode step cache for action-aware reward + metrics ---
+        # --- cache decision-time info for action-aware reward / metrics ---
         self._last_action = int(action)
         try:
             b = self.battle1
@@ -193,63 +188,20 @@ class ShowdownEnvironment(BaseShowdownEnv):
             self._last_avail_moves = None
             self._last_opp_types = None
 
-        # init counters if missing
-        self._immune_hits = getattr(self, "_immune_hits", 0)
-        self._shield_hits = getattr(self, "_shield_hits", 0)
-        self._move_actions = getattr(self, "_move_actions", 0)
-
         a = int(action)
 
-        # --- collapse 26 actions -> 10 (6 switches + 4 base moves) ---
+        # Collapse 26 -> 10 (6 switches + 4 base moves)
         if a >= self.MOVE_BASE:
             base_slot = (a - self.MOVE_BASE) % 4
             a = self.MOVE_BASE + base_slot
 
-        # helper: effectiveness vs opp at decision-time
-        def eff_of(mv):
-            try:
-                tname = str(mv.type.name).lower() if mv.type is not None else None
-            except Exception:
-                tname = None
-            if not (tname in IDX and self._last_opp_types):
-                return 1.0
-            e = 1.0
-            for t in self._last_opp_types:
-                e *= TYPE_CHART[IDX[tname], IDX[t]]
-            return float(e)
-
-        # --- immune-move shield + metrics ---
+        # (optional) immune-move shield — keep if you already use it
         try:
             if a >= self.MOVE_BASE and self._last_avail_moves:
-                self._move_actions += 1
                 mv_idx = a - self.MOVE_BASE
-                chosen_mv = self._last_avail_moves[mv_idx] if 0 <= mv_idx < len(self._last_avail_moves) else None
-                chosen_eff = eff_of(chosen_mv) if chosen_mv is not None else 1.0
-
-                if chosen_eff == 0.0:
-                    self._immune_hits += 1  # policy *picked* a 0x move
-                    # remap to best available (shield)
-                    best_i, best_eff = None, -1.0
-                    for i, mv in enumerate(self._last_avail_moves[:4]):
-                        e = eff_of(mv)
-                        if e > best_eff:
-                            best_i, best_eff = i, e
-                    if best_i is not None and best_i != mv_idx:
-                        self._shield_hits += 1
-                        a = self.MOVE_BASE + best_i
-        except Exception:
-            pass
-
-        # --- block back-to-back switches unless all moves are <1× ---
-        try:
-            want_switch = (a < self.MOVE_BASE)
-            if want_switch and getattr(self, "_switched_last_turn", False):
-                # check if all visible moves are <1× vs current opp
                 def eff_of(mv):
-                    try:
-                        tname = str(mv.type.name).lower() if mv.type is not None else None
-                    except Exception:
-                        tname = None
+                    try: tname = str(mv.type.name).lower() if mv.type is not None else None
+                    except Exception: tname = None
                     if not (tname in IDX and self._last_opp_types):
                         return 1.0
                     e = 1.0
@@ -257,25 +209,19 @@ class ShowdownEnvironment(BaseShowdownEnv):
                         e *= TYPE_CHART[IDX[tname], IDX[t]]
                     return float(e)
 
-                all_bad = True
-                best_i, best_eff = 0, -1.0
-                for i, mv in enumerate((self._last_avail_moves or [])[:4]):
-                    e = eff_of(mv)
-                    if e >= 1.0: all_bad = False
-                    if e > best_eff:
-                        best_i, best_eff = i, e
-
-                if not all_bad:
-                    # force a best move instead of a second consecutive switch
+                chosen_mv = self._last_avail_moves[mv_idx] if 0 <= mv_idx < len(self._last_avail_moves) else None
+                chosen_eff = eff_of(chosen_mv) if chosen_mv is not None else 1.0
+                if chosen_eff == 0.0:
+                    best_i, best_eff = 0, -1.0
+                    for i, mv in enumerate(self._last_avail_moves[:4]):
+                        e = eff_of(mv)
+                        if e > best_eff:
+                            best_i, best_eff = i, e
                     a = self.MOVE_BASE + best_i
         except Exception:
             pass
 
-
         return np.int64(a)
-
-
-
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
@@ -510,44 +456,31 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Simply change this number to the number of features you want to include in the observation from embed_battle.
         # If you find a way to automate this, please let me know!
-        return 87
+        return 40
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
-        Embeds the current state of a Pokémon battle into a numerical vector representation.
-        This method generates a feature vector that represents the current state of the battle,
-        this is used by the agent to make decisions.
-
-        You need to implement this method to define how the battle state is represented.
-
-        Args:
-            battle (AbstractBattle): The current battle instance containing information about
-                the player's team and the opponent's team.
-        Returns:
-            np.float32: A 1D numpy array containing the state you want the agent to observe.
+        40-d compact state (sample-efficient):
+        - Our team HP fractions (6)
+        - Opp team HP fractions (6)
+        - Our faint count (1), Opp faint count (1)
+        - Hazards on our side (4), on their side (4)  [SR, Spikes(0..1), Web, TSpikes(0..1)]
+        - Scaled turn (1)
+        - Type scalars: my_off_mult, opp_off_mult, matchup_delta, bench_best_offense_vs_opp, types_known (5)
+        - Move effectiveness vs opp for up to 4 moves (4), availability mask for those moves (4)
+        - Flags: all_moves_bad (<1x) (1), can_switch (1), is_disadv (matchup_delta<0) (1), best_move_eff (1)
+        = 40 total
         """
-        """
-        Enhanced state representation with type advantage (+42 features).
-        Base (your Exp-2): 45  → New total: 87
-        """
+        def side_hp_vec(team_dict) -> list[float]:
+            mons = list(team_dict.values())
+            hp = [m.current_hp_fraction if m is not None else 0.0 for m in mons]
+            hp += [0.0] * (6 - len(hp))
+            return hp[:6]
 
-        ours = list(battle.team.values())
-        opps = list(battle.opponent_team.values())
+        def faint_count(team_dict) -> int:
+            return sum(1 for m in team_dict.values() if m.fainted)
 
-        def side_features(team, active):
-            hp = [mon.current_hp_fraction if mon is not None else 0.0 for mon in team]
-            faint = [1.0 if mon.fainted else 0.0 for mon in team]
-            active_flags = [1.0 if mon is active else 0.0 for mon in team]
-            for arr in (hp, faint, active_flags):
-                arr.extend([0.0] * (6 - len(arr)))
-            return hp + faint + active_flags  # 18 features per side
-
-        our_vec = side_features(ours, battle.active_pokemon)
-        opp_vec = side_features(opps, battle.opponent_active_pokemon)
-
-        # --- hazards ---
-        def _hazard_vec_from_side_conditions(sc) -> list[float]:
-            """Map side_conditions dict to [SR, Spikes(0-1), Web, ToxicSpikes(0-1)]."""
+        def haz_vec(sc) -> list[float]:
             try:
                 from poke_env.data import SideCondition as SC
                 sr   = 1.0 if (sc.get(SC.STEALTH_ROCK, 0)     > 0) else 0.0
@@ -555,60 +488,82 @@ class ShowdownEnvironment(BaseShowdownEnv):
                 web  = 1.0 if (sc.get(SC.STICKY_WEB, 0)       > 0) else 0.0
                 tspk = min(sc.get(SC.TOXIC_SPIKES, 0), 2) / 2.0
             except Exception:
-                sr   = 1.0 if (sc.get("stealth_rock", 0)  or sc.get("STEALTH_ROCK", 0)) else 0.0
+                sr   = 1.0 if (sc.get("stealth_rock", 0) or sc.get("STEALTH_ROCK", 0)) else 0.0
                 spk  = (sc.get("spikes", 0) or sc.get("SPIKES", 0) or 0) / 3.0
-                web  = 1.0 if (sc.get("sticky_web", 0)    or sc.get("STICKY_WEB", 0))   else 0.0
+                web  = 1.0 if (sc.get("sticky_web", 0) or sc.get("STICKY_WEB", 0)) else 0.0
                 tspk = (sc.get("toxic_spikes", 0) or sc.get("TOXIC_SPIKES", 0) or 0) / 2.0
             return [sr, float(spk), web, float(tspk)]
 
-        our_haz = _hazard_vec_from_side_conditions(battle.side_conditions)
-        opp_haz = _hazard_vec_from_side_conditions(battle.opponent_side_conditions)
+        # base pieces
+        our_hp6  = side_hp_vec(battle.team)
+        opp_hp6  = side_hp_vec(battle.opponent_team)
+        our_fnt  = float(faint_count(battle.team))
+        opp_fnt  = float(faint_count(battle.opponent_team))
+        our_haz4 = haz_vec(battle.side_conditions)
+        opp_haz4 = haz_vec(battle.opponent_side_conditions)
+        turn_s   = min(battle.turn, 50) / 50.0
 
-        turn_scaled = min(battle.turn, 50) / 50.0
-
-        base_vec = np.array(
-            our_vec + opp_vec + our_haz + opp_haz + [turn_scaled],
-            dtype=np.float32,
-        )  # size = 45
-
-        # --- type features (+42) ---
         me  = battle.active_pokemon
         opp = battle.opponent_active_pokemon
+        my_t   = _types_of(me)  if me  else []
+        opp_t  = _types_of(opp) if opp else []
 
-        my_types  = _types_of(me)  if me  is not None else []
-        opp_types = _types_of(opp) if opp is not None else []
+        my_off  = _type_multiplier(my_t,  opp_t) if (my_t and opp_t) else 1.0
+        opp_off = _type_multiplier(opp_t, my_t)  if (my_t and opp_t) else 1.0
+        matchup = _safe_log2(my_off) - _safe_log2(opp_off)
+        types_known = 1.0 if (my_t or opp_t) else 0.0
 
-        my_onehot  = _one_hot_types(my_types)         # 18
-        opp_onehot = _one_hot_types(opp_types)        # 18
-
-        my_off_mult  = _type_multiplier(my_types,  opp_types)   # scalar
-        opp_off_mult = _type_multiplier(opp_types, my_types)    # scalar
-        matchup_delta = _safe_log2(my_off_mult) - _safe_log2(opp_off_mult)
-
-        # best bench offense vs opp-active
+        # bench-best offense vs current opp
         bench_best = 1.0
         try:
             bench = [m for m in battle.team.values() if m is not None and not m.fainted and m is not me]
             best = 0.0
             for m in bench:
                 ts = _types_of(m)
-                best = max(best, _type_multiplier(ts, opp_types))
+                best = max(best, _type_multiplier(ts, opp_t) if ts and opp_t else 1.0)
             bench_best = best if best > 0 else 1.0
         except Exception:
             bench_best = 1.0
 
-        is_disadv = 1.0 if matchup_delta < 0.0 else 0.0
+        is_disadv = 1.0 if matchup < 0.0 else 0.0
 
-        type_vec = np.concatenate([
-            my_onehot,                      # 18
-            opp_onehot,                     # 18
-            np.array([my_off_mult, opp_off_mult, matchup_delta, bench_best, is_disadv], dtype=np.float32)  # 5
-        ], dtype=np.float32)  # 41? (18+18+5) = 41; with is_disadv included in the 5 it totals 41; new obs = 45+41=86
-                            # Add +1 to keep the planned +42: include a bias flag for "types known"
-        types_known = np.array([1.0 if (my_types or opp_types) else 0.0], dtype=np.float32)
+        # move effectiveness (up to 4)
+        mv_eff = [1.0, 1.0, 1.0, 1.0]
+        mv_mask = [0.0, 0.0, 0.0, 0.0]
+        best_eff = 1.0
+        try:
+            moves = list(getattr(battle, "available_moves", []) or [])[:4]
+            for i, mv in enumerate(moves):
+                tname = None
+                try:
+                    tname = str(mv.type.name).lower() if mv.type is not None else None
+                except Exception:
+                    tname = None
+                eff = 1.0
+                if tname in IDX and opp_t:
+                    for t in opp_t:
+                        eff *= TYPE_CHART[IDX[tname], IDX[t]]
+                mv_eff[i] = float(eff)
+                mv_mask[i] = 1.0
+                best_eff = max(best_eff, float(eff))
+        except Exception:
+            pass
 
-        final_vec = np.concatenate([base_vec, type_vec, types_known]).astype(np.float32)  # 45 + 41 + 1 = 87
-        return final_vec
+        all_bad = 1.0 if all(e < 1.0 for e, m in zip(mv_eff, mv_mask) if m > 0.5) and any(mv_mask) else 0.0
+        can_switch = 1.0 if any((p is not None and not p.fainted and not p.active) for p in battle.team.values()) else 0.0
+
+        vec = np.array(
+            our_hp6 + opp_hp6 +                                    # 12
+            [our_fnt, opp_fnt] +                                   # +2 = 14
+            our_haz4 + opp_haz4 +                                  # +8 = 22
+            [turn_s] +                                             # +1 = 23
+            [my_off, opp_off, matchup, bench_best, types_known] +  # +5 = 28
+            mv_eff + mv_mask +                                     # +8 = 36
+            [all_bad, can_switch, is_disadv, best_eff],            # +4 = 40
+            dtype=np.float32
+        )
+        return vec
+
 
 
 ########################################
