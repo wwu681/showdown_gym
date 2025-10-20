@@ -165,6 +165,8 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self._no_damage_streak = 0      # consecutive no-damage attack turns
         self._last_battle_tag = None
         self._switched_last_turn = False
+        self._valbuf = {}       # per-battle running value
+
 
     def _get_action_size(self) -> int | None:
         """
@@ -174,7 +176,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         This should return the number of actions you wish to use if not using the default action scheme.
         """
-        return None  # Return None if action size is default
+        return 6  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
         # --- cache decision-time info for action-aware reward / metrics ---
@@ -267,179 +269,69 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
-        Shaped reward: damage, survivability, KOs, hazards, terminal,
-        + small type-matchup encouragement and bonus for switches that improve matchup.
+        REINFORCE-style value-delta reward:
+        current_value = sum(our_hp) - sum(opp_hp)  (weighted)
+                        - faint/status penalties for us
+                        + faint/status bonuses for them
+                        + terminal win/loss bonus
+        reward = current_value - previous_value (per battle)
         """
-
-        # Robust per-episode reset (new battle)
+        # --- battle key & reset ---
         try:
-            curr_tag = getattr(battle, "battle_tag", None) or getattr(battle, "battle_id", None) or id(battle)
+            tag = getattr(battle, "battle_tag", None) or getattr(battle, "battle_id", None) or id(battle)
         except Exception:
-            curr_tag = id(battle)
+            tag = id(battle)
 
-        if curr_tag != getattr(self, "_last_battle_tag", None):
-            # new episode → reset per-episode counters
-            self._immune_hits = 0
-            self._shield_hits = 0
-            self._move_actions = 0
-            self._no_damage_steps = 0
-            self._attack_turns = 0
-            self.switches_this_episode = 0
-            self.good_switches = 0
-            self._switch_streak = 0
-            self._no_damage_streak = 0
-            self._last_species_before = None
-            self._last_switch_turn = -999
-            self._last_battle_tag = curr_tag
+        if tag != getattr(self, "_last_battle_tag", None):
+            self._valbuf[tag] = 0.0
+            self._last_battle_tag = tag
 
-        prior = self._get_prior_battle(battle)
-        if prior is None or getattr(battle, "turn", 0) <= 1:
-            self._immune_hits = self._shield_hits = self._move_actions = 0
-            self._no_damage_steps = self._attack_turns = 0
-            self._switch_streak = self._no_damage_streak = 0
-            self._last_species_before = None
-            self._last_switch_turn = -999
-            self.switches_this_episode = 0
-            self.good_switches = 0
-            return 0.0
+        # weights (you can tweak later)
+        fainted_value = 2.0
+        hp_value      = 1.0
+        status_value  = 1.0
+        victory_value = 15.0
+        number_of_pokemons = 6
 
-        r = 0.0
-        switched = False
+        # --- compute current value ---
+        cur = 0.0
 
-        # --- track switch usage (action-free detection) ---
-        # deliberate switch = our active species changed and we didn't just faint
-        me_prev, opp_prev = prior.active_pokemon, prior.opponent_active_pokemon
-        me_now,  opp_now  = battle.active_pokemon, battle.opponent_active_pokemon
-
-        def _species(mon):
+        # our side
+        for mon in battle.team.values():
             try:
-                return getattr(mon, "base_species", None) or getattr(mon, "species", None)
+                cur += float(mon.current_hp_fraction) * hp_value
+                if mon.fainted:
+                    cur -= fainted_value
+                elif getattr(mon, "status", None) is not None:
+                    cur -= status_value
             except Exception:
-                return None
+                pass
+        # missing mons (not revealed yet) → treat as 0 hp (same as REINFORCE approach)
+        cur += (number_of_pokemons - len(battle.team)) * hp_value
 
-        if me_prev is not None and me_now is not None:
-            our_faints_prev = sum(1 for m in prior.team.values()  if m.fainted)
-            our_faints_now  = sum(1 for m in battle.team.values() if m.fainted)
+        # their side
+        for mon in battle.opponent_team.values():
+            try:
+                cur -= float(mon.current_hp_fraction) * hp_value
+                if mon.fainted:
+                    cur += fainted_value
+                elif getattr(mon, "status", None) is not None:
+                    cur += status_value
+            except Exception:
+                pass
+        cur -= (number_of_pokemons - len(battle.opponent_team)) * hp_value
 
-            if _species(me_prev) != _species(me_now) and our_faints_now == our_faints_prev:
-                switched = True
-                self.switches_this_episode = getattr(self, "switches_this_episode", 0) + 1
-
-                # consecutive switch streak
-                self._switch_streak = getattr(self, "_switch_streak", 0) + 1
-                turn_now = getattr(battle, "turn", 0)
-
-                # anti ping-pong: switching back to what we had ≤ 2 turns ago
-                curr = _species(me_now)
-                prev_prev = getattr(self, "_last_species_before", None)
-                if prev_prev is not None and curr == prev_prev and (turn_now - getattr(self, "_last_switch_turn", -999)) <= 2:
-                    r -= 0.10  # stronger anti-ping-pong penalty
-
-                self._last_species_before = _species(me_prev)
-                self._last_switch_turn = turn_now
-
-                # good switch (with type checks + graded bonus)
-                my_prev_t  = _types_of(me_prev)  if me_prev  else []
-                opp_prev_t = _types_of(opp_prev) if opp_prev else []
-                my_now_t   = _types_of(me_now)   if me_now   else []
-                opp_now_t  = _types_of(opp_now)  if opp_now  else []
-                if (my_now_t or opp_now_t) and (my_prev_t or opp_prev_t):
-                    prev_delta = _safe_log2(_type_multiplier(my_prev_t, opp_prev_t)) - _safe_log2(_type_multiplier(opp_prev_t, my_prev_t))
-                    now_delta  = _safe_log2(_type_multiplier(my_now_t,  opp_now_t)) - _safe_log2(_type_multiplier(opp_now_t,  my_now_t))
-                    improvement = now_delta - prev_delta
-                    r += 0.05 * float(np.clip(improvement, 0.0, 1.0))  # small, to avoid reward hacking
-                    if improvement >= 0.5:
-                        self.good_switches = getattr(self, "good_switches", 0) + 1
-            else:
-                self._switch_streak = 0
-
-
-        # --- damage / survivability ---
-        def total_hp(team): return sum(mon.current_hp_fraction for mon in team.values())
-        opp_hp_now, opp_hp_prev = total_hp(battle.opponent_team), total_hp(prior.opponent_team)
-        our_hp_now, our_hp_prev = total_hp(battle.team),           total_hp(prior.team)
-
-        damage_dealt = opp_hp_prev - opp_hp_now
-        damage_taken = our_hp_prev - our_hp_now
-
-        r  = 1.0 * damage_dealt           # every chip on them counts
-        r -= 0.6 * damage_taken           # getting hit hurts a bit more than before
-
-        # --- KO bonuses ---
-        def faint_count(team): return sum(1 for m in team.values() if m.fainted)
-        opp_faint_now, opp_faint_prev = faint_count(battle.opponent_team), faint_count(prior.opponent_team)
-        our_faint_now, our_faint_prev = faint_count(battle.team),           faint_count(prior.team)
-
-        r += 1.2 * max(0, opp_faint_now - opp_faint_prev)   # reward KOs slightly stronger
-        r -= 1.2 * max(0, our_faint_now - our_faint_prev)
-
-        # --- no-damage metrics + penalty (only when we chose a move and stayed in) ---
-        chose_move = (getattr(self, "_last_action", None) is not None) and (self._last_action >= self.MOVE_BASE)
-        if chose_move and not switched:
-            self._attack_turns += 1
-            opp_faint_inc = max(0, opp_faint_now - opp_faint_prev)
-            EPS = 1e-6
-            if opp_faint_inc == 0 and damage_dealt <= EPS:
-                self._no_damage_steps += 1
-                self._no_damage_streak = getattr(self, "_no_damage_streak", 0) + 1
-                r -= 0.07                                 # stronger “don’t waste a turn”
-                r -= 0.02 * float(min(3, self._no_damage_streak))
-            else:
-                if getattr(self, "_no_damage_streak", 0) >= 2:
-                    r += 0.06                             # breaking stall matters more here
-                self._no_damage_streak = 0
-        else:
-            self._no_damage_streak = 0
-
-        # --- action-aware move shaping (tiny; keep learning signal) ---
-        try:
-            last_action = getattr(self, "_last_action", None)
-            last_moves  = getattr(self, "_last_avail_moves", None) or []
-            last_opp_ts = getattr(self, "_last_opp_types", []) or []
-
-            chose_move = (last_action is not None) and (last_action >= self.MOVE_BASE)
-            if chose_move:
-                mv_idx = last_action - self.MOVE_BASE
-                chosen_mv = last_moves[mv_idx] if 0 <= mv_idx < len(last_moves) else None
-
-                def eff_of_name(tname):
-                    if not (tname in IDX and last_opp_ts): return 1.0
-                    e = 1.0
-                    for t in last_opp_ts:
-                        e *= TYPE_CHART[IDX[tname], IDX[t]]
-                    return float(e)
-
-                chosen_eff = 1.0
-                if chosen_mv is not None and getattr(chosen_mv, "type", None) is not None:
-                    try: tname = str(chosen_mv.type.name).lower()
-                    except Exception: tname = None
-                    chosen_eff = eff_of_name(tname)
-
-                best_eff = 1.0
-                for mv in last_moves[:4]:
-                    try: tn = str(mv.type.name).lower() if mv.type is not None else None
-                    except Exception: tn = None
-                    best_eff = max(best_eff, eff_of_name(tn))
-
-                if chosen_eff == 0.0:           r -= 0.15
-                elif chosen_eff < 1.0:          r -= 0.03
-                elif chosen_eff >= 4.0:         r += 0.06   # lighter than before
-                elif chosen_eff >= 2.0:         r += 0.04
-                if chosen_eff >= 1.0 and abs(chosen_eff - best_eff) < 1e-6 and best_eff > 1.0:
-                    r += 0.02
-        except Exception:
-            pass
-
-        # --- gentle taxes (small) ---
-        r -= 0.003                              # time pressure
-        if switched:
-            r -= 0.01                            # flat switch cost
-
-        # --- terminal outcome (make wins matter) ---
+        # terminal bonus
         if battle.finished:
-            r += 12.0 if battle.won else -12.0
+            cur += victory_value if battle.won else -victory_value
 
-        return float(r)
+        # --- delta to return ---
+        prev = float(self._valbuf.get(tag, 0.0))
+        rew  = float(cur - prev)
+        self._valbuf[tag] = cur
+
+        return rew
+
 
 
 
@@ -456,113 +348,62 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Simply change this number to the number of features you want to include in the observation from embed_battle.
         # If you find a way to automate this, please let me know!
-        return 40
+        return 12
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
-        """
-        40-d compact state (sample-efficient):
-        - Our team HP fractions (6)
-        - Opp team HP fractions (6)
-        - Our faint count (1), Opp faint count (1)
-        - Hazards on our side (4), on their side (4)  [SR, Spikes(0..1), Web, TSpikes(0..1)]
-        - Scaled turn (1)
-        - Type scalars: my_off_mult, opp_off_mult, matchup_delta, bench_best_offense_vs_opp, types_known (5)
-        - Move effectiveness vs opp for up to 4 moves (4), availability mask for those moves (4)
-        - Flags: all_moves_bad (<1x) (1), can_switch (1), is_disadv (matchup_delta<0) (1), best_move_eff (1)
-        = 40 total
-        """
-        def side_hp_vec(team_dict) -> list[float]:
-            mons = list(team_dict.values())
-            hp = [m.current_hp_fraction if m is not None else 0.0 for m in mons]
-            hp += [0.0] * (6 - len(hp))
-            return hp[:6]
 
-        def faint_count(team_dict) -> int:
-            return sum(1 for m in team_dict.values() if m.fainted)
-
-        def haz_vec(sc) -> list[float]:
+        # --- 0) simple ID encoding by base species (robust to gen9 randoms) ---
+        def _base_name(mon):
             try:
-                from poke_env.data import SideCondition as SC
-                sr   = 1.0 if (sc.get(SC.STEALTH_ROCK, 0)     > 0) else 0.0
-                spk  = min(sc.get(SC.SPIKES, 0), 3) / 3.0
-                web  = 1.0 if (sc.get(SC.STICKY_WEB, 0)       > 0) else 0.0
-                tspk = min(sc.get(SC.TOXIC_SPIKES, 0), 2) / 2.0
+                name = str(getattr(mon, "base_species", None) or getattr(mon, "species", "unknown"))
+                return name.lower().replace(" ", "").replace("-", "")
             except Exception:
-                sr   = 1.0 if (sc.get("stealth_rock", 0) or sc.get("STEALTH_ROCK", 0)) else 0.0
-                spk  = (sc.get("spikes", 0) or sc.get("SPIKES", 0) or 0) / 3.0
-                web  = 1.0 if (sc.get("sticky_web", 0) or sc.get("STICKY_WEB", 0)) else 0.0
-                tspk = (sc.get("toxic_spikes", 0) or sc.get("TOXIC_SPIKES", 0) or 0) / 2.0
-            return [sr, float(spk), web, float(tspk)]
+                return "unknown"
 
-        # base pieces
-        our_hp6  = side_hp_vec(battle.team)
-        opp_hp6  = side_hp_vec(battle.opponent_team)
-        our_fnt  = float(faint_count(battle.team))
-        opp_fnt  = float(faint_count(battle.opponent_team))
-        our_haz4 = haz_vec(battle.side_conditions)
-        opp_haz4 = haz_vec(battle.opponent_side_conditions)
-        turn_s   = min(battle.turn, 50) / 50.0
+        def _name_to_id(name: str) -> int:
+            # stable hash → small int id (0..63)
+            return (abs(hash(name)) % 64)
 
-        me  = battle.active_pokemon
-        opp = battle.opponent_active_pokemon
-        my_t   = _types_of(me)  if me  else []
-        opp_t  = _types_of(opp) if opp else []
+        my_id  = float(_name_to_id(_base_name(battle.active_pokemon))) if battle.active_pokemon else 0.0
+        opp_id = float(_name_to_id(_base_name(battle.opponent_active_pokemon))) if battle.opponent_active_pokemon else 0.0
 
-        my_off  = _type_multiplier(my_t,  opp_t) if (my_t and opp_t) else 1.0
-        opp_off = _type_multiplier(opp_t, my_t)  if (my_t and opp_t) else 1.0
-        matchup = _safe_log2(my_off) - _safe_log2(opp_off)
-        types_known = 1.0 if (my_t or opp_t) else 0.0
+        # --- 1) moves: base power (scaled) & type multiplier vs opp (like the REINFORCE code) ---
+        moves_bp = np.full(4, -1.0, dtype=np.float32)
+        moves_eff = np.ones(4, dtype=np.float32)
 
-        # bench-best offense vs current opp
-        bench_best = 1.0
-        try:
-            bench = [m for m in battle.team.values() if m is not None and not m.fainted and m is not me]
-            best = 0.0
-            for m in bench:
-                ts = _types_of(m)
-                best = max(best, _type_multiplier(ts, opp_t) if ts and opp_t else 1.0)
-            bench_best = best if best > 0 else 1.0
-        except Exception:
-            bench_best = 1.0
+        opp1 = getattr(battle.opponent_active_pokemon, "type_1", None)
+        opp2 = getattr(battle.opponent_active_pokemon, "type_2", None)
 
-        is_disadv = 1.0 if matchup < 0.0 else 0.0
+        moves = list(getattr(battle, "available_moves", []) or [])[:4]
+        for i, mv in enumerate(moves):
+            try:
+                # base power scaled ~100 -> 1.0; unknown = -1
+                bp = float(getattr(mv, "base_power", 0.0) or 0.0) / 100.0
+                moves_bp[i] = bp if bp > 0 else -1.0
+            except Exception:
+                moves_bp[i] = -1.0
+            try:
+                if getattr(mv, "type", None) is not None:
+                    eff = float(mv.type.damage_multiplier(opp1, opp2))
+                else:
+                    eff = 1.0
+                moves_eff[i] = eff
+            except Exception:
+                moves_eff[i] = 1.0
 
-        # move effectiveness (up to 4)
-        mv_eff = [1.0, 1.0, 1.0, 1.0]
-        mv_mask = [0.0, 0.0, 0.0, 0.0]
-        best_eff = 1.0
-        try:
-            moves = list(getattr(battle, "available_moves", []) or [])[:4]
-            for i, mv in enumerate(moves):
-                tname = None
-                try:
-                    tname = str(mv.type.name).lower() if mv.type is not None else None
-                except Exception:
-                    tname = None
-                eff = 1.0
-                if tname in IDX and opp_t:
-                    for t in opp_t:
-                        eff *= TYPE_CHART[IDX[tname], IDX[t]]
-                mv_eff[i] = float(eff)
-                mv_mask[i] = 1.0
-                best_eff = max(best_eff, float(eff))
-        except Exception:
-            pass
+        # --- 2) faint counts (team/opponent) ---
+        my_faints  = float(sum(1 for m in battle.team.values() if m.fainted))
+        opp_faints = float(sum(1 for m in battle.opponent_team.values() if m.fainted))
 
-        all_bad = 1.0 if all(e < 1.0 for e, m in zip(mv_eff, mv_mask) if m > 0.5) and any(mv_mask) else 0.0
-        can_switch = 1.0 if any((p is not None and not p.fainted and not p.active) for p in battle.team.values()) else 0.0
+        state = np.concatenate([
+            np.array([my_id, opp_id], dtype=np.float32),
+            moves_bp.astype(np.float32),
+            moves_eff.astype(np.float32),
+            np.array([my_faints, opp_faints], dtype=np.float32),
+        ]).astype(np.float32)
 
-        vec = np.array(
-            our_hp6 + opp_hp6 +                                    # 12
-            [our_fnt, opp_fnt] +                                   # +2 = 14
-            our_haz4 + opp_haz4 +                                  # +8 = 22
-            [turn_s] +                                             # +1 = 23
-            [my_off, opp_off, matchup, bench_best, types_known] +  # +5 = 28
-            mv_eff + mv_mask +                                     # +8 = 36
-            [all_bad, can_switch, is_disadv, best_eff],            # +4 = 40
-            dtype=np.float32
-        )
-        return vec
+        return state  # length == 12
+
 
 
 
