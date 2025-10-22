@@ -176,33 +176,34 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         This should return the number of actions you wish to use if not using the default action scheme.
         """
-        return 6  # Return None if action size is default
+        return 2  # Return None if action size is default
 
     def process_action(self, action: np.int64) -> np.int64:
         """
-        6 actions:
-        0..3 -> use move slot 1..4
-        4    -> Super-Effective macro: pick the most effective available move
-        5    -> Priority macro: pick the highest-priority available move
+        2 actions (macro policy):
+        0 -> Priority macro: use the highest-priority move (tie → effectiveness → base power).
+            If no priority move exists, fall back to Best-Damage macro.
+        1 -> Best-Damage macro: pick the most effective move; prefer 4x/2x, else best >=1x, else highest base power.
+
         Notes:
-        - No manual switch action. If the battle engine *forces* a switch, we choose a safe bench switch.
-        - We keep self.MOVE_BASE = 6 (env mapping: 0..5 are switches, >=6 are moves).
+        - No manual switch action. If the engine forces a switch, we auto-pick the safest bench switch.
+        - Env mapping: 0..5 are switches, >=6 are moves; we keep self.MOVE_BASE = 6.
         """
         a = int(action)
         self._last_action = a
 
-        # cache decision-time info
+        # --- cache decision-time info for reward shaping/metrics ---
         try:
             b = self.battle1
             self._last_avail_moves = list(getattr(b, "available_moves", []) or [])
             opp_now = getattr(b, "opponent_active_pokemon", None)
             self._last_opp_types = _types_of(opp_now) if opp_now is not None else []
+            forced = bool(getattr(b, "force_switch", False))
         except Exception:
-            self._last_avail_moves = None
-            self._last_opp_types = None
+            self._last_avail_moves, self._last_opp_types, forced = None, None, False
             b = None
 
-        # helpers
+        # --- helpers ---
         def eff_of_move(mv) -> float:
             try:
                 tname = str(mv.type.name).lower() if mv.type is not None else None
@@ -227,97 +228,59 @@ class ShowdownEnvironment(BaseShowdownEnv):
             except Exception:
                 return 0
 
-        # if the engine forces a switch, pick the safest bench mon
-        forced = False
-        try:
-            forced = bool(getattr(self.battle1, "force_switch", False))
-        except Exception:
-            pass
-
+        # Safest bench switch for forced-switch turns (lowest incoming multiplier)
         if forced:
-            # pick switch with lowest incoming multiplier (opp -> us)
             best_i, best_incoming = None, 1e9
             try:
                 opp_t = _types_of(b.opponent_active_pokemon) if b and b.opponent_active_pokemon else []
-                i = 0
-                for mon in (b.team.values() if b else []):
+                for i, mon in enumerate(b.team.values()):
                     if mon is None or mon.fainted or mon.active:
-                        i += 1
                         continue
                     ts = _types_of(mon)
-                    inc = _type_multiplier(opp_t, ts) if ts and opp_t else 1.0
-                    if inc < best_incoming:
-                        best_incoming, best_i = inc, i
-                    i += 1
+                    incoming = _type_multiplier(opp_t, ts) if ts and opp_t else 1.0
+                    if incoming < best_incoming:
+                        best_incoming, best_i = incoming, i
             except Exception:
                 best_i = None
+            return np.int64(best_i if best_i is not None else self.MOVE_BASE)
 
-            if best_i is not None:
-                return np.int64(best_i)
+        moves = (self._last_avail_moves or [])[:4]
+        if not moves:
+            return np.int64(self.MOVE_BASE)  # safe default
 
-            # fallback: if no legal switch found (rare), try first move slot
-            return np.int64(self.MOVE_BASE)
+        # --- Best-Damage macro (shared) ---
+        def best_damage_index(ms) -> int:
+            # prefer effectiveness (4x/2x) → >=1x, else highest base power
+            best_i, best_key = 0, (-1.0, -1.0)  # (eff_key, base_power)
+            for i, mv in enumerate(ms):
+                eff = eff_of_move(mv)
+                bp  = bp_of_move(mv)
+                eff_key = eff if eff >= 1.0 else eff - 0.5  # keep >=1x ahead of resisted high-BP
+                key = (eff_key, bp)
+                if key > best_key:
+                    best_key, best_i = key, i
+            return best_i
 
-        # MOVES 0..3 (with immune-move shield)
-        if a in (0, 1, 2, 3):
-            env_action = self.MOVE_BASE + a
-            try:
-                if self._last_avail_moves:
-                    mv_idx = a
-                    chosen_mv = self._last_avail_moves[mv_idx] if 0 <= mv_idx < len(self._last_avail_moves) else None
-                    chosen_eff = eff_of_move(chosen_mv) if chosen_mv is not None else 1.0
-                    if chosen_eff == 0.0:
-                        # remap to best available by effectiveness (then base power)
-                        best_i, best_key = 0, (-1.0, -1.0)
-                        for i, mv in enumerate(self._last_avail_moves[:4]):
-                            key = (eff_of_move(mv), bp_of_move(mv))
-                            if key > best_key:
-                                best_key, best_i = key, i
-                        env_action = self.MOVE_BASE + int(best_i)
-            except Exception:
-                pass
-            return np.int64(env_action)
-
-        # MACRO 4: Super-Effective move
-        if a == 4:
-            if self._last_avail_moves:
-                # prefer 4x/2x; else best >=1x; else highest BP
-                best_i, best_tuple = 0, (-1.0, -1.0)  # (effectiveness, base_power)
-                for i, mv in enumerate(self._last_avail_moves[:4]):
-                    eff = eff_of_move(mv)
-                    bp  = bp_of_move(mv)
-                    # penalize resisted moves to keep >=1x ahead of <1x with higher BP
-                    eff_key = eff if eff >= 1.0 else eff - 0.5
-                    key = (eff_key, bp)
-                    if key > best_tuple:
-                        best_tuple, best_i = key, i
+        # --- Action 0: Priority macro ---
+        if a == 0:
+            pri = [(i, mv) for i, mv in enumerate(moves) if prio_of_move(mv) > 0]
+            if pri:
+                # highest priority; tie by effectiveness then base power
+                best_i, _ = max(pri, key=lambda t: (prio_of_move(t[1]), eff_of_move(t[1]), bp_of_move(t[1])))
                 return np.int64(self.MOVE_BASE + int(best_i))
-            # fallback: first move
-            return np.int64(self.MOVE_BASE)
+            # no priority available → fall back to best damage move
+            bd_i = best_damage_index(moves)
+            return np.int64(self.MOVE_BASE + int(bd_i))
 
-        # MACRO 5: Priority move
-        if a == 5:
-            if self._last_avail_moves:
-                # filter priority>0; tie-break by effectiveness then base power
-                priolist = [(i, mv) for i, mv in enumerate(self._last_avail_moves[:4]) if prio_of_move(mv) > 0]
-                if priolist:
-                    best_i, _ = max(
-                        priolist,
-                        key=lambda t: (eff_of_move(t[1]), bp_of_move(t[1]), prio_of_move(t[1]))
-                    )
-                    return np.int64(self.MOVE_BASE + int(best_i))
-                # no priority available -> fall back to best effectiveness
-                best_i, best_tuple = 0, (-1.0, -1.0)
-                for i, mv in enumerate(self._last_avail_moves[:4]):
-                    key = (eff_of_move(mv), bp_of_move(mv))
-                    if key > best_tuple:
-                        best_tuple, best_i = key, i
-                return np.int64(self.MOVE_BASE + int(best_i))
-            # fallback: first move
-            return np.int64(self.MOVE_BASE)
+        # --- Action 1: Best-Damage macro ---
+        if a == 1:
+            bd_i = best_damage_index(moves)
+            # (implicit immune shield: best_damage_index will avoid 0x unless all are 0x)
+            return np.int64(self.MOVE_BASE + int(bd_i))
 
-        # unknown action -> safe default (first move)
+        # fallback (shouldn't happen): first move
         return np.int64(self.MOVE_BASE)
+
 
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
@@ -426,9 +389,6 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self._valbuf[tag] = cur
 
         return rew
-
-
-
 
     def _observation_size(self) -> int:
         """
