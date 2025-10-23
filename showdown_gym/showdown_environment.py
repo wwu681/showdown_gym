@@ -387,68 +387,134 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
-        REINFORCE-style value-delta reward:
-        current_value = sum(our_hp) - sum(opp_hp)  (weighted)
-                        - faint/status penalties for us
-                        + faint/status bonuses for them
-                        + terminal win/loss bonus
-        reward = current_value - previous_value (per battle)
+        Enhanced reward:
+        + 2.0 * damage dealt to opponent
+        - 1.5 * damage received
+        + 3.0 * new opponent KOs
+        - 3.0 * our new KOs
+        +/− 30 terminal (win/loss)
+        + quick-win bonus if win before turn 20
+        - 0.01 per step (time pressure)
         """
-        # --- battle key & reset ---
-        try:
-            tag = getattr(battle, "battle_tag", None) or getattr(battle, "battle_id", None) or id(battle)
-        except Exception:
-            tag = id(battle)
+        prior_battle = self._get_prior_battle(battle)
+        if prior_battle is None:
+            return 0.0  # first step in an episode
 
-        if tag != getattr(self, "_last_battle_tag", None):
-            self._valbuf[tag] = 0.0
-            self._last_battle_tag = tag
+        reward = 0.0
 
-        # weights (you can tweak later)
-        fainted_value = 2.0
-        hp_value      = 1.0
-        status_value  = 1.0
-        victory_value = 15.0
-        number_of_pokemons = 6
+        # --- helpers ---
+        def hp_list(team_dict):
+            vals = []
+            for mon in team_dict.values():
+                try:
+                    vals.append(float(getattr(mon, "current_hp_fraction", 0.0) or 0.0))
+                except Exception:
+                    vals.append(0.0)
+            return vals
 
-        # --- compute current value ---
+        def faint_count(team_dict) -> int:
+            c = 0
+            for mon in team_dict.values():
+                try:
+                    if mon.fainted:
+                        c += 1
+                except Exception:
+                    pass
+            return c
+
+        # --- current / prior HP lists ---
+        health_team_now   = hp_list(battle.team)
+        health_team_prev  = hp_list(prior_battle.team)
+
+        health_opp_now    = hp_list(battle.opponent_team)
+        health_opp_prev   = hp_list(prior_battle.opponent_team)
+
+        # Pad opponent HP to 6 with 1.0 (both now & prev) to avoid reveal drift
+        if len(health_opp_now) < 6:
+            health_opp_now += [1.0] * (6 - len(health_opp_now))
+        if len(health_opp_prev) < 6:
+            health_opp_prev += [1.0] * (6 - len(health_opp_prev))
+
+        # to numpy
+        health_team_now  = np.array(health_team_now, dtype=np.float32)
+        health_team_prev = np.array(health_team_prev, dtype=np.float32)
+        health_opp_now   = np.array(health_opp_now, dtype=np.float32)
+        health_opp_prev  = np.array(health_opp_prev, dtype=np.float32)
+
+        # --- damage deltas ---
+        diff_opp = health_opp_prev - health_opp_now      # >0 => we dealt damage
+        diff_our = health_team_prev - health_team_now    # >0 => we took damage
+
+        damage_dealt    = float(np.sum(diff_opp))
+        damage_received = float(np.sum(diff_our))
+
+        reward += 2.0 * damage_dealt
+        reward -= 1.5 * damage_received
+
+        # --- KO deltas ---
+        opp_faints_now  = faint_count(battle.opponent_team)
+        opp_faints_prev = faint_count(prior_battle.opponent_team)
+        our_faints_now  = faint_count(battle.team)
+        our_faints_prev = faint_count(prior_battle.team)
+
+        new_opp_kos = max(0, opp_faints_now - opp_faints_prev)
+        new_our_kos = max(0, our_faints_now - our_faints_prev)
+
+        reward += 3.0 * new_opp_kos
+        reward -= 3.0 * new_our_kos
+
+        # --- terminal ---
+        if getattr(battle, "finished", False):
+            if battle.won:
+                reward += 30.0
+                try:
+                    turn = int(getattr(battle, "turn", 0) or 0)
+                except Exception:
+                    turn = 0
+                if 0 < turn < 20:
+                    reward += 0.5 * (20 - turn)  # quick-win bonus
+            else:
+                reward -= 30.0
+
+        # --- small per-step time penalty ---
+        reward -= 0.01
+
+        return float(reward)
+
+
+        # --- compute current value (NO missing-mons terms) ---
+        our_hp  = total_hp(battle.team)
+        opp_hp  = total_hp(battle.opponent_team)
+        our_ko  = faint_count(battle.team)
+        opp_ko  = faint_count(battle.opponent_team)
+        our_st  = status_count(battle.team)
+        opp_st  = status_count(battle.opponent_team)
+
         cur = 0.0
+        cur += w_hp * (our_hp - opp_hp)
+        cur += w_ko * (opp_ko - our_ko)
+        cur += w_status * (opp_st - our_st)
 
-        # our side
-        for mon in battle.team.values():
-            try:
-                cur += float(mon.current_hp_fraction) * hp_value
-                if mon.fainted:
-                    cur -= fainted_value
-                elif getattr(mon, "status", None) is not None:
-                    cur -= status_value
-            except Exception:
-                pass
-        # missing mons (not revealed yet) → treat as 0 hp (same as REINFORCE approach)
-        cur += (number_of_pokemons - len(battle.team)) * hp_value
-
-        # their side
-        for mon in battle.opponent_team.values():
-            try:
-                cur -= float(mon.current_hp_fraction) * hp_value
-                if mon.fainted:
-                    cur += fainted_value
-                elif getattr(mon, "status", None) is not None:
-                    cur += status_value
-            except Exception:
-                pass
-        cur -= (number_of_pokemons - len(battle.opponent_team)) * hp_value
-
-        # terminal bonus
         if battle.finished:
-            cur += victory_value if battle.won else -victory_value
+            cur += win_bonus if battle.won else -win_bonus
 
-        # --- delta to return ---
+        # --- delta ---
         prev = float(self._valbuf.get(tag, 0.0))
         rew  = float(cur - prev)
         self._valbuf[tag] = cur
 
+        # (optional) tiny time pressure
+        # rew -= 0.003
+
+        # if you want to hard-cap outliers, uncomment:
+        # rew = float(np.clip(rew, -20.0, 20.0))
+
+        # clear buffer when battle ends (avoids rare tag reuse issues)
+        if battle.finished:
+            self._valbuf[tag] = 0.0
+
         return rew
+
 
     def _observation_size(self) -> int:
         """
