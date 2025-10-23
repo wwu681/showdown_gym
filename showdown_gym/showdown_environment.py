@@ -209,24 +209,34 @@ class ShowdownEnvironment(BaseShowdownEnv):
             self_types = []
             b = None
 
-        # ---------- helpers ----------
-        def eff_of(mv) -> float:
+        # ---------- helpers (replace your helpers with these) ----------
+        def mv_name(mv) -> str:
             try:
-                tname = str(mv.type.name).lower() if mv.type is not None else None
+                return str(getattr(mv, "id", None) or getattr(mv, "name", "")).lower()
             except Exception:
-                tname = None
-            if not (tname in IDX and (self._last_opp_types or [])):
-                return 1.0
-            e = 1.0
-            for t in self._last_opp_types:
-                e *= TYPE_CHART[IDX[tname], IDX[t]]
-            return float(e)
+                return ""
+
+        def tname_of(mv) -> str | None:
+            try:
+                return str(mv.type.name).lower() if mv.type is not None else None
+            except Exception:
+                return None
 
         def bp_of(mv) -> float:
             try:
                 return float(getattr(mv, "base_power", 0.0) or 0.0)
             except Exception:
                 return 0.0
+
+        def acc_of(mv) -> float:
+            # Poke-Env accuracy can be None (means 100) or int
+            try:
+                acc = getattr(mv, "accuracy", 1.0)
+                if acc is None:
+                    return 1.0
+                return float(acc) / (100.0 if acc > 1.5 else 1.0)
+            except Exception:
+                return 1.0
 
         def prio_of(mv) -> int:
             try:
@@ -241,35 +251,81 @@ class ShowdownEnvironment(BaseShowdownEnv):
                 return False
 
         def is_stab(mv) -> bool:
-            try:
-                tname = str(mv.type.name).lower() if mv.type is not None else None
-            except Exception:
-                tname = None
-            return (tname in self_types) if self_types and tname else False
+            tn = tname_of(mv)
+            return (tn in self_types) if self_types and tn else False
 
-        def best_se_index(moves) -> int:
-            # prefer 4x/2x; else >=1x; else highest BP; avoid immunities if possible
-            best_i, best_key = 0, (-1.0, -1.0)  # (eff_key, base_power)
+        def eff_of(mv) -> float:
+            tn = tname_of(mv)
+            if not (tn in IDX and (self._last_opp_types or [])):
+                return 1.0
+            e = 1.0
+            for t in self._last_opp_types:
+                e *= TYPE_CHART[IDX[tn], IDX[t]]
+            return float(e)
+
+        def expected_damage_score(mv) -> float:
+            """
+            Smarter score for damaging moves:
+            score = STAB(1.5) * max(eff, 0.25 if eff>0 else 0) * base_power * accuracy
+            - Immunities get near-0.
+            - Resisted moves aren't zeroed but are heavily down-weighted.
+            """
+            eff = eff_of(mv)
+            if eff == 0.0:
+                return 1e-6
+            stab = 1.5 if is_stab(mv) else 1.0
+            bp   = bp_of(mv)
+            acc  = acc_of(mv)
+            eff_adj = eff if eff >= 1.0 else max(0.25, eff)
+            return stab * eff_adj * bp * acc
+
+        # --- status utility ranking ---
+        def status_utility(mv, turn_now: int, our_hp_frac: float) -> tuple:
+            """
+            Higher tuple is better:
+            (tier, subscore)
+            Tiers (rough, safe):
+            4: hazards early (sr/spikes/web) and elite boosts (swords dance, nasty plot, quiver dance, calm mind, ddance)
+            3: strong disables/status (spore, sleep powder, thunder wave, will-o-wisp, toxic)
+            2: recovery when low hp (recover, roost, slack off, soft-boiled, synthesis, milk drink, shore up, strength sap)
+            1: other status utility (taunt, leech seed, yawn, encore)
+            """
+            name = mv_name(mv)
+            n = name.replace("-", "")
+
+            # hazards / elite boosts
+            elite_boosts = ("swordsdance","nastyplot","quiverdance","calmmind","dragondance","shellsmash","bulkup","coil")
+            hazards      = ("stealthrock","spikes","stickyweb","toxicspikes")
+            if n in hazards:
+                # encourage hazards more on early turns
+                early = max(0, 5 - min(5, turn_now))
+                return (4, 5 + early)
+            if n in elite_boosts:
+                return (4, 5)
+
+            # disabling / strong status
+            if n in ("spore","sleeppowder","glare","thunderwave","willowisp","toxic","confuseray"):
+                return (3, 4)
+
+            # recovery (only when low)
+            if n in ("recover","roost","slackoff","softboiled","synthesis","milkdrink","shoreup","strengthsap","morningsun","moonlight"):
+                return (2, 3 + (1 if our_hp_frac < 0.35 else 0))
+
+            # general utility
+            if n in ("taunt","leechseed","yawn","encore","haze","defog","rapidspin"):
+                return (1, 2)
+
+            # default status
+            return (0, 0)
+
+        def best_index_by(moves, keyfunc):
+            best_i, best_key = 0, None
             for i, mv in enumerate(moves):
-                eff, bp = eff_of(mv), bp_of(mv)
-                if eff == 0.0:
-                    eff_key = -1.0  # push immunities to the bottom unless all are 0x
-                else:
-                    eff_key = eff if eff >= 1.0 else eff - 0.5
-                key = (eff_key, bp)
-                if key > best_key:
-                    best_key, best_i = key, i
+                k = keyfunc(mv)
+                if best_key is None or k > best_key:
+                    best_key, best_i = k, i
             return best_i
 
-        def best_neutral_index(moves) -> int:
-            # choose >=1x with highest BP; if none, highest BP
-            best_i, best_key = 0, (-1.0, -1.0)  # (is_neutral_or_better, base_power)
-            for i, mv in enumerate(moves):
-                eff, bp = eff_of(mv), bp_of(mv)
-                key = (1.0 if eff >= 1.0 else 0.0, bp)
-                if key > best_key:
-                    best_key, best_i = key, i
-            return best_i
 
         # forced switch? pick safest bench (cannot avoid in Showdown)
         if forced:
@@ -295,47 +351,57 @@ class ShowdownEnvironment(BaseShowdownEnv):
         if not moves:
             return np.int64(self.MOVE_BASE)  # safe default to first move id
 
-        # 0: Super-Effective
+        # 0: Super-Effective (prefer 4x/2x, else >=1x by expected damage, else pure expected damage)
         if a == 0:
-            i = best_se_index(moves)
+            # weight effectiveness heavily inside expected damage
+            i = best_index_by(moves, lambda mv: (eff_of(mv) >= 2.0, eff_of(mv), expected_damage_score(mv)))
             return np.int64(self.MOVE_BASE + i)
 
-        # 1: Priority
+        # 1: Priority (highest priority; tie by expected damage)
         if a == 1:
             priolist = [(i, mv) for i, mv in enumerate(moves) if prio_of(mv) > 0]
             if priolist:
-                best_i, _ = max(priolist, key=lambda t: (prio_of(t[1]), eff_of(t[1]), bp_of(t[1])))
-                return np.int64(self.MOVE_BASE + best_i)
-            # fallback: SE
-            return np.int64(self.MOVE_BASE + best_se_index(moves))
+                i, _ = max(priolist, key=lambda t: (prio_of(t[1]), expected_damage_score(t[1])))
+                return np.int64(self.MOVE_BASE + i)
+            # fallback: best expected damage overall (avoids weird low-BP priority with 0 count)
+            i = best_index_by(moves, expected_damage_score)
+            return np.int64(self.MOVE_BASE + i)
 
-        # 2: Status / Setup
+        # 2: Status / Setup (rank by utility; fallback to neutral best expected damage)
         if a == 2:
+            turn_now = int(getattr(b, "turn", 0) or 0)
+            our_hp_frac = 0.0
+            try:
+                our_hp_frac = float(getattr(b.active_pokemon, "current_hp_fraction", 0.0) or 0.0)
+            except Exception:
+                pass
             sts = [(i, mv) for i, mv in enumerate(moves) if is_status(mv)]
             if sts:
-                # prefer higher priority status; tie by BP (rough proxy for “impact”)
-                best_i, _ = max(sts, key=lambda t: (prio_of(t[1]), bp_of(t[1])))
-                return np.int64(self.MOVE_BASE + best_i)
-            # fallback: Best Neutral
-            return np.int64(self.MOVE_BASE + best_neutral_index(moves))
+                i, _ = max(sts, key=lambda t: status_utility(t[1], turn_now, our_hp_frac))
+                return np.int64(self.MOVE_BASE + i)
+            # fallback: best neutral-or-better by expected damage
+            i = best_index_by(moves, lambda mv: (eff_of(mv) >= 1.0, expected_damage_score(mv)))
+            return np.int64(self.MOVE_BASE + i)
 
-        # 3: Best STAB
+        # 3: Best STAB (tie by expected damage; fallback to SE)
         if a == 3:
             stab_moves = [(i, mv) for i, mv in enumerate(moves) if is_stab(mv)]
             if stab_moves:
-                best_i, _ = max(stab_moves, key=lambda t: (eff_of(t[1]), bp_of(t[1])))
-                return np.int64(self.MOVE_BASE + best_i)
-            # fallback: SE
-            return np.int64(self.MOVE_BASE + best_se_index(moves))
+                i, _ = max(stab_moves, key=lambda t: expected_damage_score(t[1]))
+                return np.int64(self.MOVE_BASE + i)
+            i = best_index_by(moves, lambda mv: (eff_of(mv) >= 2.0, expected_damage_score(mv)))
+            return np.int64(self.MOVE_BASE + i)
 
-        # 4: Best Neutral (>=1x by highest BP; else highest BP)
+        # 4: Best Neutral (≥1× preferred; tie by expected damage; else expected damage)
         if a == 4:
-            return np.int64(self.MOVE_BASE + best_neutral_index(moves))
+            i = best_index_by(moves, lambda mv: (eff_of(mv) >= 1.0, expected_damage_score(mv)))
+            return np.int64(self.MOVE_BASE + i)
 
-        # 5: Highest Base Power (pure nuke)
+        # 5: Highest Base Power (but fold in accuracy/immunity a bit)
         if a == 5:
-            best_i = max(range(len(moves)), key=lambda i: bp_of(moves[i]))
-            return np.int64(self.MOVE_BASE + best_i)
+            i = best_index_by(moves, lambda mv: (bp_of(mv), acc_of(mv), eff_of(mv) > 0.0))
+            return np.int64(self.MOVE_BASE + i)
+
 
         # fallback (shouldn't happen)
         return np.int64(self.MOVE_BASE)
