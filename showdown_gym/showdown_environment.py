@@ -39,6 +39,18 @@ def safe_accuracy(mv) -> float:
     except Exception:
         return 1.0
 
+def safe_priority(mv) -> int:
+    """Return priority as int; fall back to 0 if missing."""
+    try:
+        entry = getattr(mv, "entry", None)
+        if isinstance(entry, dict):
+            p = entry.get("priority", None)
+            return int(p) if p is not None else 0
+    except Exception:
+        pass
+    # last resort: don't touch mv.priority property (it may KeyError)
+    return 0
+
 
 def _stat_estimation(mon: Pokemon, stat: str) -> float:
     """Rough stat with boosts (SimpleHeuristics-style)."""
@@ -147,7 +159,7 @@ def hint_action(battle: AbstractBattle) -> np.ndarray:
     if moves and not do_switch:
         # Priority finisher first
         opp_hp = float(getattr(opp, "current_hp_fraction", 0.0) or 0.0)
-        prios = [(i, mv) for i, mv in enumerate(moves) if int(getattr(mv, "priority", 0) or 0) > 0]
+        prios = [(i, mv) for i, mv in enumerate(moves) if safe_priority(mv) > 0]
         if prios:
             kill_i = None
             best_p = None
